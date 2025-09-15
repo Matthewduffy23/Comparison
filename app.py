@@ -1,4 +1,4 @@
-# app.py — StatsBomb-like radar (alt. sector shading • 10 rings • inline ticks • dark red/blue)
+# app.py — SB-style radar (contrasting sectors • 10 rings • 1-dec ticks from ring 3)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -8,29 +8,33 @@ from pathlib import Path
 import io
 import re
 
-st.set_page_config(page_title="Player Comparison — SB-style Radar", layout="wide")
+st.set_page_config(page_title="Player Comparison — SB Radar", layout="wide")
 
 # ---------------- Theme ----------------
-COL_A = "#DF3B37"          # SB dark red
-COL_B = "#2D6DB7"          # SB dark blue
+COL_A = "#DF3B37"          # dark SB red
+COL_B = "#2D6DB7"          # dark SB blue
 FILL_A = (223/255, 59/255, 55/255, 0.22)
 FILL_B = (45/255, 109/255, 183/255, 0.22)
 
 PAGE_BG   = "#FFFFFF"
-DISC_BG   = "#E7EBF1"      # chart disc
-SECTOR_A  = "#F7F8FA"      # alternating sector shades
-SECTOR_B  = "#EFF2F6"
-RAY_COLOR = "#D5D9E0"      # spoke lines
-RING_COLOR= "#C4CAD2"      # ring lines
+DISC_BG   = "#E7EBF1"
+
+# Stronger alternating sector contrast
+SECTOR_A  = "#F5F7FA"
+SECTOR_B  = "#E9EEF5"
+
+RAY_COLOR = "#CFD5DD"
+RING_COLOR= "#C1C8D1"
 RING_LW   = 1.0
 
 LABEL_COLOR = "#0F172A"
 TITLE_FS    = 26
 SUB_FS      = 12
-AXIS_FS     = 11
-TICK_FS     = 8.5
+AXIS_FS     = 10         # smaller axis labels
+TICK_FS     = 8          # smaller tick labels
 
-NUM_RINGS   = 10           # << 10 separation rings
+NUM_RINGS   = 10         # 10 separation rings
+INNER_HOLE  = 10         # keep a small hole in the middle
 
 # -------------- Data ---------------
 @st.cache_data(show_spinner=False)
@@ -52,7 +56,6 @@ if missing:
     st.error(f"Dataset missing required columns: {missing}")
     st.stop()
 
-# Defaults (no Key passes per 90)
 DEFAULT_METRICS = [
     "Non-penalty goals per 90","xG per 90","Shots per 90","Shots on target, %",
     "Dribbles per 90","Successful dribbles, %","Touches in box per 90",
@@ -60,7 +63,6 @@ DEFAULT_METRICS = [
     "Accurate passes, %","xA per 90"
 ]
 
-# Label cleaner: remove " per 90", tidy names
 def clean_label(s: str) -> str:
     s = s.replace("Non-penalty goals per 90", "NP goals")
     s = s.replace("xG per 90", "xG").replace("xA per 90", "xA")
@@ -79,7 +81,6 @@ with st.sidebar:
     st.header("Controls")
 
     pos_scope = st.text_input("Position startswith", "CF")
-
     df["Minutes played"] = pd.to_numeric(df["Minutes played"], errors="coerce")
     df["Age"]            = pd.to_numeric(df["Age"], errors="coerce")
 
@@ -144,7 +145,6 @@ def vals_for(name: str) -> np.ndarray:
 A_val = vals_for(pA)
 B_val = vals_for(pB)
 
-# per-axis min/max for normalization, small padding
 axis_min = pool[metrics].min().values
 axis_max = pool[metrics].max().values
 pad = (axis_max - axis_min) * 0.07
@@ -170,8 +170,8 @@ if sort_by_gap:
     B_val  = B_val[order]
     axis_min = axis_min[order]; axis_max = axis_max[order]
 
-# tick values for inline spoke labels (10 rings => 10 ticks)
-ring_radii = np.linspace(10, 100, NUM_RINGS)   # keep small inner hole at 10
+# 1-decimal axis ticks per spoke (10 rings)
+ring_radii = np.linspace(INNER_HOLE, 100, NUM_RINGS)
 axis_ticks = [np.linspace(axis_min[i], axis_max[i], NUM_RINGS) for i in range(len(labels))]
 
 # -------------- Radar drawer --------------
@@ -190,48 +190,42 @@ def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB):
     ax.set_theta_offset(np.pi/2)
     ax.set_theta_direction(-1)
 
-    # axis labels only (no radial ticks)
     ax.set_xticks(theta)
     ax.set_xticklabels(labels, fontsize=AXIS_FS, color=LABEL_COLOR, fontweight=600)
     ax.set_yticks([])
     for s in ax.spines.values(): s.set_visible(False)
 
-    # disc
     disc = Circle((0,0), radius=102, transform=ax.transData._b, color=DISC_BG, zorder=0)
     ax.add_artist(disc)
 
-    # --- alternating sector shading like SB ---
-    # boundaries are midpoints between axes
+    # alternating sectors (more contrast)
     bounds = np.linspace(0, 2*np.pi, N, endpoint=False)
     bounds = np.concatenate([bounds, [bounds[0] + 2*np.pi/N]])
     starts = (bounds[:-1] - (np.pi/N)/2)
     ends   = (bounds[:-1] + (np.pi/N)/2)
-    # normalize to degrees
-    starts_deg = np.degrees(starts)
-    ends_deg   = np.degrees(ends)
     for i in range(N):
         color = SECTOR_A if i % 2 == 0 else SECTOR_B
-        ax.add_artist(Wedge((0,0), 100, starts_deg[i], ends_deg[i], width=100, facecolor=color,
-                            edgecolor="none", zorder=1.2))
+        ax.add_artist(Wedge((0,0), 100, np.degrees(starts[i]), np.degrees(ends[i]),
+                            width=100, facecolor=color, edgecolor="none", zorder=1.2))
 
     # spoke rays
     for ang in theta:
-        ax.plot([ang, ang], [10, 100], color=RAY_COLOR, lw=1.0, zorder=2)
+        ax.plot([ang, ang], [INNER_HOLE, 100], color=RAY_COLOR, lw=1.0, zorder=2)
 
-    # 10 separation rings
+    # 10 rings
     ring_t = np.linspace(0, 2*np.pi, 361)
     for r in ring_radii:
         ax.plot(ring_t, np.full_like(ring_t, r), color=RING_COLOR, lw=RING_LW, zorder=2)
 
-    # per-spoke value ticks (small, neat numbers at each ring)
+    # per-spoke value ticks: 1 decimal, from 3rd ring outward only
+    start_idx = 2  # 0-based: show rings index 2..9 (i.e., from 3rd ring)
     for i, ang in enumerate(theta):
-        vals = ticks[i]
-        for rr, v in zip(ring_radii, vals):
-            txt = f"{v:.2f}" if abs(v) < 100 else f"{v:.0f}"
-            ax.text(ang, rr-2.2, txt, ha="center", va="center",
+        vals = ticks[i][start_idx:]
+        for rr, v in zip(ring_radii[start_idx:], vals):
+            ax.text(ang, rr-2.0, f"{v:.1f}", ha="center", va="center",
                     fontsize=TICK_FS, color="#5B6470", rotation=0, zorder=3)
 
-    # polygons (white under-stroke for crisp edge)
+    # polygons
     ax.plot(theta_closed, Ar, color="white", lw=5.0, zorder=5)
     ax.plot(theta_closed, Ar, color=COL_A, lw=2.2, zorder=6)
     ax.fill(theta_closed, Ar, color=FILL_A, zorder=4)
@@ -242,7 +236,7 @@ def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB):
 
     ax.set_rlim(0, 105)
 
-    # titles (left & right, SB vibe)
+    # headers
     fig.text(0.12, 0.96, headerA, color=COL_A, fontsize=TITLE_FS, fontweight="bold", ha="left")
     fig.text(0.12, 0.935, subA,    color=COL_A, fontsize=SUB_FS,      ha="left")
     fig.text(0.88, 0.96, headerB, color=COL_B, fontsize=TITLE_FS, fontweight="bold", ha="right")
@@ -262,14 +256,15 @@ st.pyplot(fig, use_container_width=True)
 buf_png = io.BytesIO()
 fig.savefig(buf_png, format="png", dpi=340, bbox_inches="tight")
 st.download_button("⬇️ Download PNG", data=buf_png.getvalue(),
-                   file_name=f"{pA.replace(' ','_')}_vs_{pB.replace(' ','_')}_radar_SB_style.png",
+                   file_name=f"{pA.replace(' ','_')}_vs_{pB.replace(' ','_')}_radar_SB.png",
                    mime="image/png")
 
 buf_svg = io.BytesIO()
 fig.savefig(buf_svg, format="svg", bbox_inches="tight")
 st.download_button("⬇️ Download SVG", data=buf_svg.getvalue(),
-                   file_name=f"{pA.replace(' ','_')}_vs_{pB.replace(' ','_')}_radar_SB_style.svg",
+                   file_name=f"{pA.replace(' ','_')}_vs_{pB.replace(' ','_')}_radar_SB.svg",
                    mime="image/svg+xml")
+
 
 
 
