@@ -1,4 +1,4 @@
-# app.py — Player Comparison (Director Radar — Clean)
+# app.py — Player Comparison (Director Radar — Elite)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -31,13 +31,15 @@ if missing:
     st.error(f"Dataset missing required columns: {missing}")
     st.stop()
 
-# ---------- Defaults (13 metrics) ----------
+# ---------- Defaults (13-ish metrics) ----------
+# ✔ removed "Key passes per 90" from defaults by request
 DEFAULT_METRICS = [
     "Non-penalty goals per 90","xG per 90","Shots per 90","Shots on target, %",
     "Dribbles per 90","Successful dribbles, %","Touches in box per 90",
     "Aerial duels per 90","Aerial duels won, %","Passes per 90",
-    "Accurate passes, %","xA per 90","Key passes per 90",
+    "Accurate passes, %","xA per 90"
 ]
+
 SHORT = {
     "Non-penalty goals per 90":"NP goals/90",
     "Shots on target, %":"SoT %",
@@ -56,13 +58,13 @@ with st.sidebar:
     df["Minutes played"] = pd.to_numeric(df["Minutes played"], errors="coerce")
     df["Age"] = pd.to_numeric(df["Age"], errors="coerce")
 
-    # Minutes slider: Premier League friendly 0–5000
+    # Premier-League friendly minutes control
     min_minutes, max_minutes = st.slider("Minutes filter", 0, 5000, (500, 5000))
     min_age, max_age = st.slider("Age filter", int(df["Age"].min() or 14), int(df["Age"].max() or 40), (16, 33))
 
     # Player pickers (by position scope)
-    picker_pool = df[df["Position"].astype(str).str.startswith(tuple([pos_scope]))].copy()
-    players = sorted(picker_pool["Player"].dropna().unique().tolist())
+    pool_pick = df[df["Position"].astype(str).str.startswith(tuple([pos_scope]))].copy()
+    players = sorted(pool_pick["Player"].dropna().unique().tolist())
     if len(players) < 2:
         st.error("Not enough players for this filter.")
         st.stop()
@@ -72,13 +74,14 @@ with st.sidebar:
     # Metric selection
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
     metrics_default = [m for m in DEFAULT_METRICS if m in df.columns]
-    metrics = st.multiselect("Metrics (13 recommended)", [c for c in df.columns if c in numeric_cols], metrics_default)
+    metrics = st.multiselect("Metrics (recommended)", [c for c in df.columns if c in numeric_cols], metrics_default)
     if len(metrics) < 3:
         st.warning("Pick at least 3 metrics.")
         st.stop()
 
     sort_by_gap = st.checkbox("Sort axes by biggest gap", False)
-    show_percent_numbers = st.checkbox("Show percentile numbers on polygons", False)
+    show_percent_numbers = st.checkbox("Show numbers on polygons", False)
+    show_rays = st.checkbox("Show metric rays", False)  # default off for a cleaner elite look
 
 # ---------- Build percentile pool: union of both players’ leagues ----------
 try:
@@ -97,6 +100,7 @@ pool = df[
     (df["Age"].between(min_age, max_age))
 ].copy()
 
+# Num conversion + NA drop for chosen metrics
 missing_m = [m for m in metrics if m not in pool.columns]
 if missing_m:
     st.error(f"Missing metric columns: {missing_m}")
@@ -132,25 +136,26 @@ if sort_by_gap:
     A_pct = A_pct[order]
     B_pct = B_pct[order]
 
-# ---------- Radar Drawer (from scratch, ultra-clean) ----------
+# ---------- Radar Drawer (elite, from scratch) ----------
 def draw_director_radar(
     labels, A, B,
     title_left, subtitle_left, title_right, subtitle_right,
     colA="#E64B3C", colB="#1F77B4",
-    page_bg="#F5F6F8",     # page
-    disc_bg="#D4D9E1",     # chart disc
+    page_bg="#F6F7F9",   # page
+    disc_bg="#D1D7E0",   # chart disc
     band_0_25="#FFFFFF",
-    band_25_50="#EEF1F5",
-    band_50_75="#E1E5EB",
-    band_75_100="#D3D8E0",
-    ring_line="#8D96A3",   # 25/50/75/100 lines
-    ray_line="#C8D0DA",    # metric rays
+    band_25_50="#EFF2F6",
+    band_50_75="#E3E7ED",
+    band_75_100="#D6DBE4",
+    ring_line="#4B5563", # bold quartile lines
+    ray_line="#CBD5E1",  # optional metric rays
     label_color="#0F172A",
-    show_vals=False
+    show_vals=False,
+    show_rays=False
 ):
     N = len(labels)
-    ang = np.linspace(0, 2*np.pi, N, endpoint=False).tolist()
-    ang += ang[:1]
+    theta = np.linspace(0, 2*np.pi, N, endpoint=False).tolist()
+    theta += theta[:1]
 
     A = np.nan_to_num(np.asarray(A, dtype=float), nan=0.0).tolist(); A += A[:1]
     B = np.nan_to_num(np.asarray(B, dtype=float), nan=0.0).tolist(); B += B[:1]
@@ -160,79 +165,82 @@ def draw_director_radar(
     ax = plt.subplot(111, polar=True)
     ax.set_facecolor(page_bg)
 
-    # start at top, clockwise
+    # Start at 12 o’clock, clockwise
     ax.set_theta_offset(np.pi/2)
     ax.set_theta_direction(-1)
 
-    # remove default grid/ticks
+    # Axis labels only (no radial ticks)
     ax.set_xticks(np.linspace(0, 2*np.pi, N, endpoint=False))
-    ax.set_xticklabels(labels, fontsize=12, fontweight=600, color=label_color)
+    ax.set_xticklabels(labels, fontsize=12, fontweight=700, color=label_color)
     ax.set_yticks([])
     for s in ax.spines.values():
         s.set_visible(False)
 
-    # disc background
+    # Disc background
     disc = Circle((0,0), radius=102, transform=ax.transData._b, color=disc_bg, zorder=0)
     ax.add_artist(disc)
 
-    # quartile bands (no labels per your spec)
-    bands = [(25, band_0_25), (50, band_25_50), (75, band_50_75), (100, band_75_100)]
+    # Quartile bands (no labels)
+    bands = [(25, band_0_25),(50, band_25_50),(75, band_50_75),(100, band_75_100)]
     inner = 0
     for r, color in bands:
-        w = Wedge((0,0), r, 0, 360, width=r-inner, facecolor=color, edgecolor="none", zorder=1)
-        ax.add_artist(w); inner = r
+        ax.add_artist(Wedge((0,0), r, 0, 360, width=r-inner, facecolor=color, edgecolor="none", zorder=1))
+        inner = r
 
-    # bold separators (25/50/75/100), no numeric labels
+    # Bold separations at 25/50/75/100 (no text)
     for r in (25, 50, 75, 100):
-        ax.plot([0, 2*np.pi], [r, r], color=ring_line, lw=1.8, alpha=0.98, zorder=2)
+        ax.plot([0, 2*np.pi], [r, r], color=ring_line, lw=2.3, alpha=1.0, zorder=2)
 
-    # subtle metric rays
-    for t in np.linspace(0, 2*np.pi, N, endpoint=False):
-        ax.plot([t, t], [0, 100], color=ray_line, lw=1.0, alpha=0.65, zorder=2)
+    # Optional very light rays per metric
+    if show_rays:
+        for t in np.linspace(0, 2*np.pi, N, endpoint=False):
+            ax.plot([t, t], [0, 100], color=ray_line, lw=1.0, alpha=0.6, zorder=2)
 
-    # polygons with double-stroke (white under, colour over) for premium edge
-    ax.plot(ang, A, color="white", lw=5.2, zorder=4)
-    ax.plot(ang, A, color=colA, lw=2.8, zorder=5)
-    ax.fill(ang, A, color=colA, alpha=0.28, zorder=3)
+    # Polygons with double-stroke outline for razor crispness
+    ax.plot(theta, A, color="white", lw=5.4, zorder=4)
+    ax.plot(theta, A, color=colA,   lw=2.9, zorder=5)
+    ax.fill(theta, A, color=colA, alpha=0.26, zorder=3)
 
-    ax.plot(ang, B, color="white", lw=5.2, zorder=4)
-    ax.plot(ang, B, color=colB, lw=2.8, zorder=5)
-    ax.fill(ang, B, color=colB, alpha=0.28, zorder=3)
+    ax.plot(theta, B, color="white", lw=5.4, zorder=4)
+    ax.plot(theta, B, color=colB,   lw=2.9, zorder=5)
+    ax.fill(theta, B, color=colB, alpha=0.26, zorder=3)
 
-    # optional numbers on polygons
+    # Optional numbers
     if show_vals:
-        for a, v in zip(ang[:-1], A[:-1]):
+        for a, v in zip(theta[:-1], A[:-1]):
             if v >= 8:
                 ax.text(a, min(v+3, 100), f"{v:.0f}", color=colA, fontsize=10,
                         ha="center", va="center", fontweight="bold", zorder=6)
-        for a, v in zip(ang[:-1], B[:-1]):
+        for a, v in zip(theta[:-1], B[:-1]):
             if v >= 8:
                 ax.text(a, max(v-7, 0)+3, f"{v:.0f}", color=colB, fontsize=10,
                         ha="center", va="center", fontweight="bold", zorder=6)
 
     ax.set_rlim(0, 102)
 
-    # headline blocks (no subtitle about percentiles)
-    fig.text(0.18, 0.965, title_left, color=colA, fontsize=28, fontweight="bold", ha="left")
-    fig.text(0.18, 0.937, subtitle_left, color=colA, fontsize=13, ha="left")
+    # Titles only (no on-chart “percentiles vs …” subtitle)
+    fig.text(0.18, 0.965, title_left,  color=colA, fontsize=28, fontweight="bold", ha="left")
+    fig.text(0.18, 0.937, f"{subtitle_left}",  color=colA, fontsize=13, ha="left")
     fig.text(0.82, 0.965, title_right, color=colB, fontsize=28, fontweight="bold", ha="right")
-    fig.text(0.82, 0.937, subtitle_right, color=colB, fontsize=13, ha="right")
+    fig.text(0.82, 0.937, f"{subtitle_right}", color=colB, fontsize=13, ha="right")
 
     return fig
 
+labels_display = [SHORT.get(m, m) for m in metrics]
 fig = draw_director_radar(
-    labels=labels,
+    labels=labels_display,
     A=A_pct, B=B_pct,
-    title_left=pA, subtitle_left=f"{teamA} — {leagueA}",
-    title_right=pB, subtitle_right=f"{teamB} — {leagueB}",
-    show_vals=show_percent_numbers
+    title_left=pA, subtitle_left=f"{rowA['Team']} — {rowA['League']}",
+    title_right=pB, subtitle_right=f"{rowB['Team']} — {rowB['League']}",
+    show_vals=show_percent_numbers,
+    show_rays=show_rays
 )
 
 st.pyplot(fig, use_container_width=True)
 
 # ---------- Exports ----------
 buf_png = io.BytesIO()
-fig.savefig(buf_png, format="png", dpi=320, bbox_inches="tight")
+fig.savefig(buf_png, format="png", dpi=340, bbox_inches="tight")
 st.download_button("⬇️ Download PNG", data=buf_png.getvalue(),
                    file_name=f"{pA.replace(' ','_')}_vs_{pB.replace(' ','_')}_radar.png",
                    mime="image/png")
@@ -242,5 +250,6 @@ fig.savefig(buf_svg, format="svg", bbox_inches="tight")
 st.download_button("⬇️ Download SVG", data=buf_svg.getvalue(),
                    file_name=f"{pA.replace(' ','_')}_vs_{pB.replace(' ','_')}_radar.svg",
                    mime="image/svg+xml")
+
 
 
