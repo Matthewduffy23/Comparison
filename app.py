@@ -1,4 +1,4 @@
-# app.py — Player Comparison (Director Radar — Elite, Rings On Top)
+# app.py — Player Comparison (Director Radar — Rings Fixed)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -52,7 +52,6 @@ with st.sidebar:
     st.header("Controls")
     pos_scope = st.text_input("Position startswith", "CF")
 
-    # numerics
     df["Minutes played"] = pd.to_numeric(df["Minutes played"], errors="coerce")
     df["Age"] = pd.to_numeric(df["Age"], errors="coerce")
 
@@ -60,7 +59,7 @@ with st.sidebar:
     min_minutes, max_minutes = st.slider("Minutes filter", 0, 5000, (500, 5000))
     min_age, max_age = st.slider("Age filter", int(df["Age"].min() or 14), int(df["Age"].max() or 40), (16, 33))
 
-    # picker pool by position scope
+    # Player pickers (by position scope)
     picker_pool = df[df["Position"].astype(str).str.startswith(tuple([pos_scope]))].copy()
     players = sorted(picker_pool["Player"].dropna().unique().tolist())
     if len(players) < 2:
@@ -69,7 +68,7 @@ with st.sidebar:
     pA = st.selectbox("Player A (red)", players, index=0)
     pB = st.selectbox("Player B (blue)", players, index=1)
 
-    # metrics
+    # Metrics
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
     metrics_default = [m for m in DEFAULT_METRICS if m in df.columns]
     metrics = st.multiselect("Metrics (recommended)", [c for c in df.columns if c in numeric_cols], metrics_default)
@@ -98,7 +97,6 @@ pool = df[
     (df["Age"].between(min_age, max_age))
 ].copy()
 
-# numeric conversion + NA drop
 missing_m = [m for m in metrics if m not in pool.columns]
 if missing_m:
     st.error(f"Missing metric columns: {missing_m}")
@@ -110,7 +108,7 @@ if pool.empty:
     st.warning("No players remain in pool after filters.")
     st.stop()
 
-# percentiles 0..100 within this pool
+# Percentiles (0..100) within this pool
 ranks = pool[metrics].rank(pct=True) * 100
 pool_pct = pd.concat([pool[["Player"]], ranks], axis=1)
 
@@ -128,13 +126,12 @@ teamB, leagueB = rowB["Team"], rowB["League"]
 
 labels = [SHORT.get(m, m) for m in metrics]
 if sort_by_gap:
-    gap = np.abs(A_pct - B_pct)
-    order = np.argsort(-gap)
+    order = np.argsort(-np.abs(A_pct - B_pct))
     labels = [labels[i] for i in order]
     A_pct = A_pct[order]
     B_pct = B_pct[order]
 
-# ---------- Radar Drawer (rings last so they’re visible) ----------
+# ---------- Radar Drawer (rings drawn as full circles, LAST) ----------
 def draw_director_radar(
     labels, A, B,
     title_left, subtitle_left, title_right, subtitle_right,
@@ -145,8 +142,8 @@ def draw_director_radar(
     band_25_50="#EFF2F6",
     band_50_75="#E3E7ED",
     band_75_100="#D6DBE4",
-    ring_dark="#111827",   # strong dark ring
-    ring_glow="#FFFFFF",   # subtle glow under ring for contrast
+    ring_dark="#0F172A",   # strong dark ring
+    ring_glow="#FFFFFF",   # glow under-stroke
     ray_line="#CBD5E1",    # optional metric rays
     label_color="#0F172A",
     show_vals=False,
@@ -179,14 +176,14 @@ def draw_director_radar(
     disc = Circle((0,0), radius=102, transform=ax.transData._b, color=disc_bg, zorder=0)
     ax.add_artist(disc)
 
-    # quartile bands (behind everything)
+    # quartile bands (behind)
     bands = [(25, band_0_25),(50, band_25_50),(75, band_50_75),(100, band_75_100)]
     inner = 0
     for r, color in bands:
         ax.add_artist(Wedge((0,0), r, 0, 360, width=r-inner, facecolor=color, edgecolor="none", zorder=1))
         inner = r
 
-    # (optional) very light metric rays
+    # optional metric rays
     if show_rays:
         for t in np.linspace(0, 2*np.pi, N, endpoint=False):
             ax.plot([t, t], [0, 100], color=ray_line, lw=1.0, alpha=0.6, zorder=2)
@@ -200,7 +197,6 @@ def draw_director_radar(
     ax.plot(theta, B, color=colB,   lw=2.9, zorder=5)
     ax.fill(theta, B, color=colB, alpha=0.26, zorder=3)
 
-    # optional numbers on polygons
     if show_vals:
         for a, v in zip(theta[:-1], A[:-1]):
             if v >= 8:
@@ -213,14 +209,16 @@ def draw_director_radar(
 
     ax.set_rlim(0, 102)
 
-    # >>> draw quartile rings LAST so they sit ON TOP of polygons <<<
-    for r, w in zip((25, 50, 75, 100), (4.8, 4.8, 4.8, 4.8)):
-        # glow under-stroke to separate from fills
-        ax.plot([0, 2*np.pi], [r, r], color=ring_glow, lw=w+2.0, alpha=0.9, zorder=10)
+    # >>> RINGS: draw full circles with many angles, LAST, above polygons <<<
+    ring_t = np.linspace(0, 2*np.pi, 361)
+    for r, w in zip((25, 50, 75, 100), (4.6, 4.6, 4.6, 4.6)):
+        rr = np.full_like(ring_t, r, dtype=float)
+        # glow under-stroke for separation
+        ax.plot(ring_t, rr, color=ring_glow, lw=w+2.0, alpha=0.95, zorder=10)
         # dark ring
-        ax.plot([0, 2*np.pi], [r, r], color=ring_dark, lw=w, alpha=1.0, zorder=11)
+        ax.plot(ring_t, rr, color=ring_dark, lw=w, alpha=1.0, zorder=11)
 
-    # titles (no on-chart “percentiles vs …” text)
+    # Titles only (no on-chart percentiles text)
     fig.text(0.18, 0.965, title_left,  color=colA, fontsize=28, fontweight="bold", ha="left")
     fig.text(0.18, 0.937, f"{subtitle_left}",  color=colA, fontsize=13, ha="left")
     fig.text(0.82, 0.965, title_right, color=colB, fontsize=28, fontweight="bold", ha="right")
@@ -252,3 +250,4 @@ fig.savefig(buf_svg, format="svg", bbox_inches="tight")
 st.download_button("⬇️ Download SVG", data=buf_svg.getvalue(),
                    file_name=f"{pA.replace(' ','_')}_vs_{pB.replace(' ','_')}_radar.svg",
                    mime="image/svg+xml")
+
