@@ -252,7 +252,3 @@ fig.savefig(buf_svg, format="svg", bbox_inches="tight")
 st.download_button("⬇️ Download SVG", data=buf_svg.getvalue(),
                    file_name=f"{pA.replace(' ','_')}_vs_{pB.replace(' ','_')}_radar.svg",
                    mime="image/svg+xml")
-
-
-
-
