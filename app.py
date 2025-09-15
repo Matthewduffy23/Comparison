@@ -1,12 +1,13 @@
-# app.py — Player Comparison (Classic Radar)
+# app.py — Player Comparison (Elite Radar)
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import Wedge
 from pathlib import Path
 import io
 
-st.set_page_config(page_title="Player Comparison — Radar", layout="wide")
+st.set_page_config(page_title="Player Comparison — Elite Radar", layout="wide")
 
 # ---------- Data ----------
 @st.cache_data(show_spinner=False)
@@ -24,7 +25,6 @@ if df is None:
         st.stop()
     df = pd.read_csv(up)
 
-# sanity
 need = {"Player","League","Team","Position","Minutes played","Age"}
 missing = [c for c in need if c not in df.columns]
 if missing:
@@ -38,7 +38,6 @@ DEFAULT_METRICS = [
     "Aerial duels per 90","Aerial duels won, %","Passes per 90",
     "Accurate passes, %","xA per 90","Key passes per 90",
 ]
-
 SHORT = {
     "Non-penalty goals per 90":"NP goals/90",
     "Shots on target, %":"SoT %",
@@ -51,7 +50,6 @@ SHORT = {
 # ---------- Sidebar ----------
 with st.sidebar:
     st.header("Controls")
-
     pos_scope = st.text_input("Position startswith", "CF")
 
     df["Minutes played"] = pd.to_numeric(df["Minutes played"], errors="coerce")
@@ -63,23 +61,25 @@ with st.sidebar:
     picker_pool = df[df["Position"].astype(str).str.startswith(tuple([pos_scope]))].copy()
     players = sorted(picker_pool["Player"].dropna().unique().tolist())
     if len(players) < 2:
-        st.error("Not enough players for this filter.")
+        st.error("Not enough players with current filter.")
         st.stop()
 
     pA = st.selectbox("Player A (red)", players, index=0)
     pB = st.selectbox("Player B (blue)", players, index=1)
 
+    # Metrics
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
-    default_metrics = [m for m in DEFAULT_METRICS if m in df.columns]
-    metrics = st.multiselect("Metrics (13 recommended)", [c for c in df.columns if c in numeric_cols], default_metrics)
+    metrics_default = [m for m in DEFAULT_METRICS if m in df.columns]
+    metrics = st.multiselect("Metrics (13 recommended)", [c for c in df.columns if c in numeric_cols], metrics_default)
     if len(metrics) < 3:
         st.warning("Pick at least 3 metrics.")
         st.stop()
 
-    show_values = st.checkbox("Annotate percentile values", True)
-    rings_step = st.select_slider("Ring step (%)", options=[5,10,20], value=10)
+    rings_step = st.select_slider("Ring step", options=[25], value=25)  # fixed to 25s per your brief
+    show_percent_numbers = st.checkbox("Show percentile numbers on polygons", False)
+    sort_by_gap = st.checkbox("Sort axes by biggest gap", False)
 
-# ---------- Percentile pool: union of the two players’ leagues ----------
+# ---------- Build percentile pool: union of both players’ leagues ----------
 try:
     rowA = df[df["Player"] == pA].iloc[0]
     rowB = df[df["Player"] == pB].iloc[0]
@@ -96,7 +96,6 @@ pool = df[
     (df["Age"].between(min_age, max_age))
 ].copy()
 
-# numeric + dropna on selected metrics
 missing_m = [m for m in metrics if m not in pool.columns]
 if missing_m:
     st.error(f"Missing metric columns: {missing_m}")
@@ -105,10 +104,10 @@ for m in metrics:
     pool[m] = pd.to_numeric(pool[m], errors="coerce")
 pool = pool.dropna(subset=metrics)
 if pool.empty:
-    st.warning("No players left in pool after filters.")
+    st.warning("No players remain in pool after filters.")
     st.stop()
 
-# Percentiles 0..100 within pool
+# Percentiles (0..100) within this pool
 ranks = pool[metrics].rank(pct=True) * 100
 pool_pct = pd.concat([pool[["Player"]], ranks], axis=1)
 
@@ -121,90 +120,120 @@ def pct_for(name: str):
 A_pct = pct_for(pA)
 B_pct = pct_for(pB)
 
-# also grab team/league for title line
 teamA, leagueA = rowA["Team"], rowA["League"]
 teamB, leagueB = rowB["Team"], rowB["League"]
 
-# ---------- Radar plotting (matplotlib) ----------
-def plot_radar(ax, labels, A, B, colors=("crimson","royalblue"),
-               ring_step=10, show_vals=True):
+# Order axes (as chosen, or by gap)
+labels = [SHORT.get(m, m) for m in metrics]
+if sort_by_gap:
+    gap = np.abs(A_pct - B_pct)
+    order = np.argsort(-gap)
+    labels = [labels[i] for i in order]
+    A_pct = A_pct[order]
+    B_pct = B_pct[order]
+
+# ---------- Pro Radar ----------
+def draw_elite_radar(labels, A, B, title_left, subtitle_left, title_right, subtitle_right,
+                     colA="#E64B3C", colB="#1F77B4",
+                     bg="#EDEDED", ring_light="#F4F4F4", ring_mid="#E6E6E6", ring_dark="#D9D9D9",
+                     show_vals=False):
     """
-    Classic radar: grey rings, two filled polygons, tidy labels.
-    A, B are 0..100 percentiles (len == len(labels)).
+    Clean radar with grey canvas, quartile bands (0-25-50-75-100),
+    no tick spam (only 25/50/75/100 labels), and two filled polygons.
     """
-    # angles
     N = len(labels)
-    angles = np.linspace(0, 2*np.pi, N, endpoint=False).tolist()
-    angles += angles[:1]  # close loop
+    theta = np.linspace(0, 2*np.pi, N, endpoint=False).tolist()
+    theta += theta[:1]  # close loop
 
-    # close the values loop
-    A = np.asarray(A, dtype=float).tolist()
-    B = np.asarray(B, dtype=float).tolist()
-    A += A[:1]; B += B[:1]
+    A = np.asarray(A, dtype=float).tolist(); A += A[:1]
+    B = np.asarray(B, dtype=float).tolist(); B += B[:1]
 
-    # style
-    ax.set_theta_offset(np.pi / 2)   # start at top
-    ax.set_theta_direction(-1)       # clockwise
+    fig = plt.figure(figsize=(11.5, 11), dpi=200)
+    fig.patch.set_facecolor(bg)
+    ax = plt.subplot(111, polar=True)
+    ax.set_facecolor(bg)
+
+    # Start at top, clockwise
+    ax.set_theta_offset(np.pi/2)
+    ax.set_theta_direction(-1)
+
+    # Remove default grids/ticks
     ax.set_xticks(np.linspace(0, 2*np.pi, N, endpoint=False))
-    ax.set_xticklabels(labels, fontsize=11, fontweight=600, color="#333")
-
-    # rings
-    max_r = 100
-    ax.set_rlabel_position(0)
-    ring_vals = list(range(ring_step, max_r+ring_step, ring_step))
-    ax.set_yticks(ring_vals)
-    ax.set_yticklabels([str(v) for v in ring_vals], fontsize=9, color="#555")
-    ax.set_ylim(0, max_r)
-
-    # grid styling
-    ax.grid(color="lightgrey", linestyle="-", linewidth=0.8, alpha=0.8)
+    ax.set_xticklabels(labels, fontsize=12, fontweight=600, color="#2b2b2b")
+    ax.set_yticks([])  # no default numeric ticks
     for spine in ax.spines.values():
         spine.set_visible(False)
 
-    # fill polygons
-    colA, colB = colors
-    ax.plot(angles, A, color=colA, linewidth=2.5)
-    ax.fill(angles, A, color=colA, alpha=0.25, zorder=2)
-    ax.plot(angles, B, color=colB, linewidth=2.5)
-    ax.fill(angles, B, color=colB, alpha=0.25, zorder=2)
+    # --- Quartile annulus bands (0-25, 25-50, 50-75, 75-100) ---
+    # Draw full-circle wedges behind data
+    bands = [
+        (25, ring_light),   # 0–25
+        (50, ring_mid),     # 25–50
+        (75, ring_dark),    # 50–75
+        (100, ring_mid),    # 75–100 (slightly darker than light)
+    ]
+    inner = 0
+    for r, color in bands:
+        w = Wedge((0,0), r, 0, 360, width=r-inner, facecolor=color, edgecolor="none", zorder=0)
+        ax.add_artist(w)
+        inner = r
 
-    # value annotations
+    # Thin ring outlines at 25/50/75/100
+    for r in (25, 50, 75, 100):
+        ax.plot([0, 2*np.pi], [r, r], color="white", lw=1.2, alpha=0.9, zorder=1)
+
+    # Place ONLY four ring labels (at fixed angle on the left)
+    label_angle = np.deg2rad(180)   # left side
+    for r, txt in zip((25, 50, 75, 100), ("25", "50", "75", "100")):
+        ax.text(label_angle, r, txt, color="#6b6b6b", fontsize=11, ha="center", va="center")
+
+    # Metric divider rays (very subtle)
+    for t in np.linspace(0, 2*np.pi, N, endpoint=False):
+        ax.plot([t, t], [0, 100], color="white", lw=0.8, alpha=0.6, zorder=1)
+
+    # Polygons
+    ax.plot(theta, A, color=colA, lw=2.8, zorder=3)
+    ax.fill(theta, A, color=colA, alpha=0.28, zorder=2)
+    ax.plot(theta, B, color=colB, lw=2.8, zorder=3)
+    ax.fill(theta, B, color=colB, alpha=0.28, zorder=2)
+
+    # Optional percentile numbers on shapes
     if show_vals:
-        for ang, val in zip(angles[:-1], A[:-1]):
+        for ang, val in zip(theta[:-1], A[:-1]):
             if val >= 8:
-                ax.text(ang, val+2, f"{val:.0f}", color=colA, fontsize=9, ha="center", va="center")
-        for ang, val in zip(angles[:-1], B[:-1]):
+                ax.text(ang, min(val+3, 100), f"{val:.0f}", color=colA, fontsize=10,
+                        ha="center", va="center", fontweight="bold", zorder=4)
+        for ang, val in zip(theta[:-1], B[:-1]):
             if val >= 8:
-                ax.text(ang, max(val-7, 0)+2, f"{val:.0f}", color=colB, fontsize=9, ha="center", va="center")
+                ax.text(ang, max(val-7, 0)+3, f"{val:.0f}", color=colB, fontsize=10,
+                        ha="center", va="center", fontweight="bold", zorder=4)
 
-# labels (shorten where mapped)
-labels = [SHORT.get(m, m) for m in metrics]
+    ax.set_rlim(0, 102)
 
-# order = as-chosen; if you want biggest-gap first, uncomment:
-# gap = np.abs(A_pct - B_pct); order = np.argsort(-gap)
-# labels = [labels[i] for i in order]; A_pct = A_pct[order]; B_pct = B_pct[order]
+    # Title blocks (left/right)
+    fig.text(0.14, 0.96, title_left, color=colA, fontsize=26, fontweight="bold", ha="left")
+    fig.text(0.14, 0.93, subtitle_left, color=colA, fontsize=13, ha="left")
+    fig.text(0.86, 0.96, title_right, color=colB, fontsize=26, fontweight="bold", ha="right")
+    fig.text(0.86, 0.93, subtitle_right, color=colB, fontsize=13, ha="right")
 
-fig = plt.figure(figsize=(9.5, 10), dpi=180)
-ax = plt.subplot(111, polar=True)
-plot_radar(ax, labels, A_pct, B_pct, colors=("#E64B3C","#1F77B4"),
-           ring_step=rings_step, show_vals=show_values)
+    return fig
 
-# header titles like your example
-fig.suptitle("", y=0.98)
-ax.set_title("", pad=20)
-
-# Left (A) and right (B) title blocks
-fig.text(0.12, 0.96, pA, color="#E64B3C", fontsize=22, fontweight="bold", ha="left")
-fig.text(0.12, 0.93, f"{teamA} — {leagueA}", color="#E64B3C", fontsize=12, ha="left")
-fig.text(0.88, 0.96, pB, color="#1F77B4", fontsize=22, fontweight="bold", ha="right")
-fig.text(0.88, 0.93, f"{teamB} — {leagueB}", color="#1F77B4", fontsize=12, ha="right")
+fig = draw_elite_radar(
+    labels=labels,
+    A=A_pct, B=B_pct,
+    title_left=pA, subtitle_left=f"{teamA} — {leagueA}",
+    title_right=pB, subtitle_right=f"{teamB} — {leagueB}",
+    show_vals=show_percent_numbers
+)
 
 st.pyplot(fig, use_container_width=True)
 
-# download as PNG
+# PNG download
 buf = io.BytesIO()
 fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
-st.download_button("⬇️ Download radar (PNG)", data=buf.getvalue(),
-                   file_name=f"{pA.replace(' ','_')}_vs_{pB.replace(' ','_')}_radar.png",
-                   mime="image/png")
-
+st.download_button(
+    "⬇️ Download radar (PNG)",
+    data=buf.getvalue(),
+    file_name=f"{pA.replace(' ','_')}_vs_{pB.replace(' ','_')}_radar.png",
+    mime="image/png",
+)
