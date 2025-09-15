@@ -29,43 +29,67 @@ DEFAULT_METRICS = [
     "Key passes per 90",
 ]
 
+# Short labels for readability in the radar
+LABEL_MAP = {
+    "Non-penalty goals per 90": "NP goals/90",
+    "Successful dribbles, %": "Dribble success",
+    "Passes to final third per 90": "Passes to 1/3",
+    "Passes to penalty area per 90": "Passes to PA/90",
+    "Aerial duels won, %": "Aerials won %",
+    "Accurate passes, %": "Pass accuracy %",
+    "Shots on target, %": "SoT %",
+}
+
 # ---- Sidebar controls ----
 with st.sidebar:
     st.header("Controls")
 
-    # (Optional) restrict by position tag
+    # Position scope
     pos_scope = st.text_input("Position startswith", "CF")
 
-    # Simple hygiene filters so pool is sensible
-    min_minutes, max_minutes = st.slider("Minutes filter", 0, int(df["Minutes played"].max()), (500, 99999))
-    min_age, max_age       = st.slider("Age filter", int(df["Age"].min()), int(df["Age"].max()), (16, 33))
+    # Hygiene filters
+    min_minutes, max_minutes = st.slider(
+        "Minutes filter", 0, int(df["Minutes played"].max()), (500, 99_999)
+    )
+    min_age, max_age = st.slider(
+        "Age filter", int(df["Age"].min()), int(df["Age"].max()), (16, 33)
+    )
 
-    # Choose 2 players
+    # Pick players (filtered by position only so you can still compare cross-league)
     pool_for_picker = df[df["Position"].astype(str).str.startswith(tuple([pos_scope]))]
     players = sorted(pool_for_picker["Player"].dropna().unique().tolist())
+    if len(players) < 2:
+        st.error("Not enough players found for the current position filter.")
+        st.stop()
+
     p1 = st.selectbox("Player A", players, index=0)
     p2 = st.selectbox("Player B", players, index=1)
 
-    # Choose metrics (default 13)
+    # Pick metrics (defaults to 13)
     numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
     suggested = [m for m in DEFAULT_METRICS if m in df.columns]
-    metrics = st.multiselect("Metrics (13 recommended)", [c for c in df.columns if c in numeric_cols], default=suggested)
+    metrics = st.multiselect(
+        "Metrics (13 recommended)",
+        [c for c in df.columns if c in numeric_cols],
+        default=suggested,
+    )
     if len(metrics) == 0:
+        st.warning("Select at least one metric.")
         st.stop()
 
-# ---- Build the comparison pool: both players' leagues combined ----
+# ---- Build the comparison pool: union of the two players' leagues ----
 row1 = df[df["Player"] == p1].iloc[0]
 row2 = df[df["Player"] == p2].iloc[0]
 leagues = {row1["League"], row2["League"]}
 
 pool = df[
-    (df["League"].isin(leagues)) &
-    (df["Position"].astype(str).str.startswith(tuple([pos_scope]))) &
-    (df["Minutes played"].between(min_minutes, max_minutes)) &
-    (df["Age"].between(min_age, max_age))
+    (df["League"].isin(leagues))
+    & (df["Position"].astype(str).str.startswith(tuple([pos_scope])))
+    & (df["Minutes played"].between(min_minutes, max_minutes))
+    & (df["Age"].between(min_age, max_age))
 ].copy()
 
-# Make sure all metrics are present and numeric
+# Validate metrics present and numeric
 missing = [m for m in metrics if m not in pool.columns]
 if missing:
     st.error(f"Missing metric columns in data: {missing}")
@@ -75,18 +99,16 @@ for m in metrics:
     pool[m] = pd.to_numeric(pool[m], errors="coerce")
 
 pool = pool.dropna(subset=metrics)
-
 if pool.empty:
     st.warning("No players in the pool after filters. Loosen Minutes/Age/Position.")
     st.stop()
 
-# ---- Compute percentiles across the pool (between the two leagues) ----
-ranks = pool[metrics].rank(pct=True) * 100  # 0..100 percentiles
-pool = pd.concat([pool[["Player"]], ranks], axis=1)
+# ---- Percentiles across this pool (0..100) ----
+ranks = pool[metrics].rank(pct=True) * 100
+pool_pct = pd.concat([pool[["Player"]], ranks], axis=1)
 
 def get_player_percentiles(name: str):
-    # if multiple rows per player, take mean
-    sub = pool[pool["Player"] == name][metrics]
+    sub = pool_pct[pool_pct["Player"] == name][metrics]
     if sub.empty:
         return np.array([np.nan] * len(metrics))
     return sub.mean().values
@@ -94,7 +116,7 @@ def get_player_percentiles(name: str):
 p1_pct = get_player_percentiles(p1)
 p2_pct = get_player_percentiles(p2)
 
-# Also fetch raw values (averaged if duplicates)
+# Raw values (averaged if dup rows exist for a player)
 raw = df[df["Player"].isin([p1, p2])][["Player"] + metrics].copy()
 raw_grouped = raw.groupby("Player")[metrics].mean(numeric_only=True).reset_index()
 p1_vals = raw_grouped[raw_grouped["Player"] == p1][metrics].values[0]
@@ -102,34 +124,93 @@ p2_vals = raw_grouped[raw_grouped["Player"] == p2][metrics].values[0]
 
 # ---- Radar chart (percentiles) ----
 st.subheader("Percentile radar (vs combined leagues)")
-theta = metrics
+
+theta = [LABEL_MAP.get(m, m) for m in metrics]
+COL_A = "#E74C3C"  # red
+COL_B = "#1F77B4"  # blue
+
 fig = go.Figure()
-fig.add_trace(go.Scatterpolar(r=p1_pct, theta=theta, fill="toself", name=p1))
-fig.add_trace(go.Scatterpolar(r=p2_pct, theta=theta, fill="toself", name=p2))
+fig.add_trace(
+    go.Scatterpolar(
+        r=p1_pct,
+        theta=theta,
+        name=p1,
+        mode="lines+markers",
+        line=dict(color=COL_A, width=3),
+        marker=dict(size=6),
+        fill="toself",
+        fillcolor="rgba(231, 76, 60, 0.15)",
+        hovertemplate="<b>%{theta}</b><br>%{r:.1f}th percentile<extra>"
+        + p1
+        + "</extra>",
+    )
+)
+fig.add_trace(
+    go.Scatterpolar(
+        r=p2_pct,
+        theta=theta,
+        name=p2,
+        mode="lines+markers",
+        line=dict(color=COL_B, width=3),
+        marker=dict(size=6),
+        fill="toself",
+        fillcolor="rgba(31, 119, 180, 0.15)",
+        hovertemplate="<b>%{theta}</b><br>%{r:.1f}th percentile<extra>"
+        + p2
+        + "</extra>",
+    )
+)
 fig.update_layout(
-    polar=dict(radialaxis=dict(range=[0, 100], ticksuffix="%")),
+    template="plotly_white",
     showlegend=True,
-    margin=dict(l=20, r=20, t=20, b=20)
+    legend=dict(orientation="h", yanchor="bottom", y=1.08, xanchor="center", x=0.5),
+    margin=dict(l=10, r=10, t=10, b=10),
+    height=600,
+    polar=dict(
+        radialaxis=dict(
+            range=[0, 100],
+            ticksuffix="%",
+            tickfont=dict(size=12),
+            gridcolor="rgba(0,0,0,0.08)",
+            gridwidth=1,
+            linecolor="rgba(0,0,0,0.25)",
+        ),
+        angularaxis=dict(
+            tickfont=dict(size=12),
+            gridcolor="rgba(0,0,0,0.06)",
+        ),
+    ),
 )
 st.plotly_chart(fig, use_container_width=True)
 
-# ---- Table: raw values + percentiles ----
-def fmt(v):
+# ---- Details table: raw values + percentiles ----
+def fmt_num(v):
     try:
-        return f"{v:.2f}"
+        return f"{float(v):.2f}"
     except Exception:
         return v
 
-table = pd.DataFrame({
-    "Metric": metrics,
-    f"{p1} value": [fmt(v) for v in p1_vals],
-    f"{p1} %ile":  [f"{x:.1f}" for x in p1_pct],
-    f"{p2} value": [fmt(v) for v in p2_vals],
-    f"{p2} %ile":  [f"{x:.1f}" for x in p2_pct],
-})
+table = pd.DataFrame(
+    {
+        "Metric": metrics,
+        f"{p1} value": [fmt_num(v) for v in p1_vals],
+        f"{p1} %ile": [f"{x:.1f}%" for x in p1_pct],
+        f"{p2} value": [fmt_num(v) for v in p2_vals],
+        f"{p2} %ile": [f"{x:.1f}%" for x in p2_pct],
+    }
+)
 
 st.subheader("Details")
 st.dataframe(table, use_container_width=True)
 
 csv = table.to_csv(index=False).encode("utf-8")
-st.download_button("⬇️ Download comparison (CSV)", data=csv, file_name="player_comparison.csv", mime="text/csv")
+st.download_button(
+    "⬇️ Download comparison (CSV)",
+    data=csv,
+    file_name="player_comparison.csv",
+    mime="text/csv",
+)
+
+# Friendly note if same player is selected twice
+if p1 == p2:
+    st.info("You selected the same player for A and B — the radar will overlap.")
