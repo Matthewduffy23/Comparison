@@ -1,13 +1,13 @@
-# app.py — Player Comparison (Elite Radar)
+# app.py — Player Comparison (Disc Radar Pro)
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import Wedge
+from matplotlib.patches import Wedge, Circle
 from pathlib import Path
 import io
 
-st.set_page_config(page_title="Player Comparison — Elite Radar", layout="wide")
+st.set_page_config(page_title="Player Comparison — Disc Radar Pro", layout="wide")
 
 # ---------- Data ----------
 @st.cache_data(show_spinner=False)
@@ -67,7 +67,6 @@ with st.sidebar:
     pA = st.selectbox("Player A (red)", players, index=0)
     pB = st.selectbox("Player B (blue)", players, index=1)
 
-    # Metrics
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
     metrics_default = [m for m in DEFAULT_METRICS if m in df.columns]
     metrics = st.multiselect("Metrics (13 recommended)", [c for c in df.columns if c in numeric_cols], metrics_default)
@@ -75,9 +74,8 @@ with st.sidebar:
         st.warning("Pick at least 3 metrics.")
         st.stop()
 
-    rings_step = st.select_slider("Ring step", options=[25], value=25)  # fixed to 25s per your brief
-    show_percent_numbers = st.checkbox("Show percentile numbers on polygons", False)
     sort_by_gap = st.checkbox("Sort axes by biggest gap", False)
+    show_percent_numbers = st.checkbox("Show percentile numbers on polygons", False)
 
 # ---------- Build percentile pool: union of both players’ leagues ----------
 try:
@@ -123,7 +121,6 @@ B_pct = pct_for(pB)
 teamA, leagueA = rowA["Team"], rowA["League"]
 teamB, leagueB = rowB["Team"], rowB["League"]
 
-# Order axes (as chosen, or by gap)
 labels = [SHORT.get(m, m) for m in metrics]
 if sort_by_gap:
     gap = np.abs(A_pct - B_pct)
@@ -132,93 +129,104 @@ if sort_by_gap:
     A_pct = A_pct[order]
     B_pct = B_pct[order]
 
-# ---------- Pro Radar ----------
-def draw_elite_radar(labels, A, B, title_left, subtitle_left, title_right, subtitle_right,
-                     colA="#E64B3C", colB="#1F77B4",
-                     bg="#EDEDED", ring_light="#F4F4F4", ring_mid="#E6E6E6", ring_dark="#D9D9D9",
-                     show_vals=False):
-    """
-    Clean radar with grey canvas, quartile bands (0-25-50-75-100),
-    no tick spam (only 25/50/75/100 labels), and two filled polygons.
-    """
+# ---------- Disc Radar Drawer ----------
+def draw_disc_radar(
+    labels, A, B,
+    title_left, subtitle_left, title_right, subtitle_right,
+    colA="#E64B3C", colB="#1F77B4",
+    page_bg="#F5F6F8",
+    disc_bg="#D6DAE1",          # chart disc color (distinct from page)
+    band_0_25="#FFFFFF",
+    band_25_50="#EEF1F5",
+    band_50_75="#E1E5EB",
+    band_75_100="#D3D8E0",
+    ring_line="#9BA4B0",        # strong 25/50/75/100 separators
+    ray_line="#CCD2DB",         # metric rays
+    label_color="#2B2B2B",
+    show_vals=False
+):
     N = len(labels)
-    theta = np.linspace(0, 2*np.pi, N, endpoint=False).tolist()
-    theta += theta[:1]  # close loop
+    ang = np.linspace(0, 2*np.pi, N, endpoint=False).tolist()
+    ang += ang[:1]
 
-    A = np.asarray(A, dtype=float).tolist(); A += A[:1]
-    B = np.asarray(B, dtype=float).tolist(); B += B[:1]
+    A = np.nan_to_num(np.asarray(A, dtype=float), nan=0.0).tolist(); A += A[:1]
+    B = np.nan_to_num(np.asarray(B, dtype=float), nan=0.0).tolist(); B += B[:1]
 
-    fig = plt.figure(figsize=(11.5, 11), dpi=200)
-    fig.patch.set_facecolor(bg)
+    fig = plt.figure(figsize=(12.5, 12.5), dpi=220)
+    fig.patch.set_facecolor(page_bg)
     ax = plt.subplot(111, polar=True)
-    ax.set_facecolor(bg)
+    ax.set_facecolor(page_bg)
 
-    # Start at top, clockwise
+    # start at top, clockwise
     ax.set_theta_offset(np.pi/2)
     ax.set_theta_direction(-1)
 
-    # Remove default grids/ticks
+    # Remove default stuff
     ax.set_xticks(np.linspace(0, 2*np.pi, N, endpoint=False))
-    ax.set_xticklabels(labels, fontsize=12, fontweight=600, color="#2b2b2b")
-    ax.set_yticks([])  # no default numeric ticks
-    for spine in ax.spines.values():
-        spine.set_visible(False)
+    ax.set_xticklabels(labels, fontsize=12, fontweight=600, color=label_color)
+    ax.set_yticks([])
+    for s in ax.spines.values():
+        s.set_visible(False)
 
-    # --- Quartile annulus bands (0-25, 25-50, 50-75, 75-100) ---
-    # Draw full-circle wedges behind data
+    # --- Chart disc (clear contrast with page) ---
+    disc = Circle((0,0), radius=102, transform=ax.transData._b, color=disc_bg, zorder=0)
+    ax.add_artist(disc)
+
+    # --- Quartile bands (0–25, 25–50, 50–75, 75–100) ---
     bands = [
-        (25, ring_light),   # 0–25
-        (50, ring_mid),     # 25–50
-        (75, ring_dark),    # 50–75
-        (100, ring_mid),    # 75–100 (slightly darker than light)
+        (25, band_0_25),
+        (50, band_25_50),
+        (75, band_50_75),
+        (100, band_75_100),
     ]
     inner = 0
     for r, color in bands:
-        w = Wedge((0,0), r, 0, 360, width=r-inner, facecolor=color, edgecolor="none", zorder=0)
+        w = Wedge((0,0), r, 0, 360, width=r-inner, facecolor=color, edgecolor="none", zorder=1)
         ax.add_artist(w)
         inner = r
 
-    # Thin ring outlines at 25/50/75/100
+    # Strong separators at 25/50/75/100
     for r in (25, 50, 75, 100):
-        ax.plot([0, 2*np.pi], [r, r], color="white", lw=1.2, alpha=0.9, zorder=1)
+        ax.plot([0, 2*np.pi], [r, r], color=ring_line, lw=1.6, alpha=0.95, zorder=2)
 
-    # Place ONLY four ring labels (at fixed angle on the left)
-    label_angle = np.deg2rad(180)   # left side
-    for r, txt in zip((25, 50, 75, 100), ("25", "50", "75", "100")):
-        ax.text(label_angle, r, txt, color="#6b6b6b", fontsize=11, ha="center", va="center")
-
-    # Metric divider rays (very subtle)
+    # Subtle metric rays
     for t in np.linspace(0, 2*np.pi, N, endpoint=False):
-        ax.plot([t, t], [0, 100], color="white", lw=0.8, alpha=0.6, zorder=1)
+        ax.plot([t, t], [0, 100], color=ray_line, lw=1.0, alpha=0.7, zorder=2)
 
     # Polygons
-    ax.plot(theta, A, color=colA, lw=2.8, zorder=3)
-    ax.fill(theta, A, color=colA, alpha=0.28, zorder=2)
-    ax.plot(theta, B, color=colB, lw=2.8, zorder=3)
-    ax.fill(theta, B, color=colB, alpha=0.28, zorder=2)
+    ax.plot(ang, A, color=colA, lw=3.2, zorder=4)
+    ax.fill(ang, A, color=colA, alpha=0.28, zorder=3)
+    ax.plot(ang, B, color=colB, lw=3.2, zorder=4)
+    ax.fill(ang, B, color=colB, alpha=0.28, zorder=3)
 
-    # Optional percentile numbers on shapes
+    # Optional percentile numbers
     if show_vals:
-        for ang, val in zip(theta[:-1], A[:-1]):
-            if val >= 8:
-                ax.text(ang, min(val+3, 100), f"{val:.0f}", color=colA, fontsize=10,
-                        ha="center", va="center", fontweight="bold", zorder=4)
-        for ang, val in zip(theta[:-1], B[:-1]):
-            if val >= 8:
-                ax.text(ang, max(val-7, 0)+3, f"{val:.0f}", color=colB, fontsize=10,
-                        ha="center", va="center", fontweight="bold", zorder=4)
+        for a, v in zip(ang[:-1], A[:-1]):
+            if v >= 8:
+                ax.text(a, min(v+3, 100), f"{v:.0f}", color=colA, fontsize=10,
+                        ha="center", va="center", fontweight="bold", zorder=5)
+        for a, v in zip(ang[:-1], B[:-1]):
+            if v >= 8:
+                ax.text(a, max(v-7, 0)+3, f"{v:.0f}", color=colB, fontsize=10,
+                        ha="center", va="center", fontweight="bold", zorder=5)
 
     ax.set_rlim(0, 102)
 
-    # Title blocks (left/right)
-    fig.text(0.14, 0.96, title_left, color=colA, fontsize=26, fontweight="bold", ha="left")
-    fig.text(0.14, 0.93, subtitle_left, color=colA, fontsize=13, ha="left")
-    fig.text(0.86, 0.96, title_right, color=colB, fontsize=26, fontweight="bold", ha="right")
-    fig.text(0.86, 0.93, subtitle_right, color=colB, fontsize=13, ha="right")
+    # Four ring labels (25/50/75/100) on left side
+    label_angle = np.deg2rad(180)
+    for r, txt in zip((25, 50, 75, 100), ("25", "50", "75", "100")):
+        ax.text(label_angle, r, txt, color="#606A76", fontsize=12,
+                ha="center", va="center", zorder=6)
+
+    # Title blocks
+    fig.text(0.18, 0.96, title_left, color=colA, fontsize=28, fontweight="bold", ha="left")
+    fig.text(0.18, 0.93, subtitle_left, color=colA, fontsize=13, ha="left")
+    fig.text(0.82, 0.96, title_right, color=colB, fontsize=28, fontweight="bold", ha="right")
+    fig.text(0.82, 0.93, subtitle_right, color=colB, fontsize=13, ha="right")
 
     return fig
 
-fig = draw_elite_radar(
+fig = draw_disc_radar(
     labels=labels,
     A=A_pct, B=B_pct,
     title_left=pA, subtitle_left=f"{teamA} — {leagueA}",
@@ -234,6 +242,6 @@ fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
 st.download_button(
     "⬇️ Download radar (PNG)",
     data=buf.getvalue(),
-    file_name=f"{pA.replace(' ','_')}_vs_{pB.replace(' ','_')}_radar.png",
+    file_name=f"{pA.replace(' ','_')}_vs_{pB.replace(' ','_')}_disc_radar.png",
     mime="image/png",
 )
