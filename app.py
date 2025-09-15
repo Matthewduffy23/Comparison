@@ -1,9 +1,9 @@
-# app.py — SB-style radar: white/grey rings from center • no lines through labels • dark red/blue
+# app.py — StatsBomb-like radar: white/grey rings • dark red/blue • 10 rings • tidy ticks
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import Wedge
+from matplotlib.patches import Wedge, Circle
 from pathlib import Path
 import io
 import re
@@ -11,17 +11,19 @@ import re
 st.set_page_config(page_title="Player Comparison — SB Radar", layout="wide")
 
 # ---------------- Theme ----------------
+# Darker, TV-safe colours
 COL_A = "#C62828"          # deep red
 COL_B = "#1F4E8C"          # deep blue
 FILL_A = (198/255, 40/255, 40/255, 0.23)
 FILL_B = (31/255, 78/255, 140/255, 0.23)
 
-PAGE_BG     = "#FFFFFF"
+PAGE_BG   = "#FFFFFF"
+DISC_BG   = "#FFFFFF"      # centre disc base (kept white)
 RING_FILL_A = "#FFFFFF"    # alternating ring fills
-RING_FILL_B = "#EEF1F4"    # light grey
-RAY_COLOR   = "#C9CED6"    # spoke lines
-RING_EDGE   = "#C9CED6"
-RING_LW     = 1.0
+RING_FILL_B = "#EEF1F4"    # light grey (like SB)
+RAY_COLOR = "#C9CED6"      # spoke lines
+RING_EDGE = "#C9CED6"      # ring borders
+RING_LW   = 1.0
 
 LABEL_COLOR = "#0F172A"
 TITLE_FS    = 26
@@ -29,9 +31,8 @@ SUB_FS      = 12
 AXIS_FS     = 10           # compact axis labels
 TICK_FS     = 8            # compact tick labels
 
-NUM_RINGS    = 10
-INNER_RADIUS = 0           # <<< no inner hole so alternating rings start at centre
-SPOKE_END    = 97          # <<< stop rays before labels so no line goes through labels
+NUM_RINGS   = 10
+INNER_HOLE  = 10           # small central hole radius (keeps middle clean)
 
 # -------------- Data ---------------
 @st.cache_data(show_spinner=False)
@@ -160,15 +161,15 @@ labels = [clean_label(m) for m in metrics]
 
 if sort_by_gap:
     order = np.argsort(-np.abs(A_r - B_r))
-    labels   = [labels[i] for i in order]
-    A_r      = A_r[order]
-    B_r      = B_r[order]
-    A_val    = A_val[order]
-    B_val    = B_val[order]
+    labels  = [labels[i] for i in order]
+    A_r     = A_r[order]
+    B_r     = B_r[order]
+    A_val   = A_val[order]
+    B_val   = B_val[order]
     axis_min = axis_min[order]; axis_max = axis_max[order]
 
 # ring radii and per-spoke tick values
-ring_radii = np.linspace(INNER_RADIUS, 100, NUM_RINGS)
+ring_radii = np.linspace(INNER_HOLE, 100, NUM_RINGS)
 axis_ticks = [np.linspace(axis_min[i], axis_max[i], NUM_RINGS) for i in range(len(labels))]
 
 # -------------- Radar drawer --------------
@@ -192,20 +193,20 @@ def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB):
     ax.set_yticks([])
     for s in ax.spines.values(): s.set_visible(False)
 
-    # --- alternating white/grey rings from CENTER ---
-    ring_edges = np.linspace(INNER_RADIUS, 100, NUM_RINGS)
-    last = INNER_RADIUS
+    # --- alternating white/grey rings (like SB) ---
+    ring_edges = np.linspace(INNER_HOLE, 100, NUM_RINGS)
+    last = 0.0
     for i, r in enumerate(ring_edges, start=1):
         fill = RING_FILL_A if i % 2 else RING_FILL_B
         ax.add_artist(Wedge((0,0), r, 0, 360, width=r-last,
                             facecolor=fill, edgecolor=RING_EDGE, lw=RING_LW, zorder=1))
         last = r
 
-    # spoke rays that STOP before labels (no line through labels)
+    # spoke rays on top
     for ang in theta:
-        ax.plot([ang, ang], [INNER_RADIUS, SPOKE_END], color=RAY_COLOR, lw=1.0, zorder=2)
+        ax.plot([ang, ang], [INNER_HOLE, 100], color=RAY_COLOR, lw=1.0, zorder=2)
 
-    # per-spoke numeric ticks (1 dp) from 3rd ring outward only
+    # per-spoke values (1 decimal) from 3rd ring outward
     start_idx = 2
     for i, ang in enumerate(theta):
         vals = ticks[i][start_idx:]
@@ -213,13 +214,13 @@ def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB):
             ax.text(ang, rr-2.0, f"{v:.1f}", ha="center", va="center",
                     fontsize=TICK_FS, color="#5B6470", rotation=0, zorder=3)
 
-    # polygons
+    # polygons (white under-stroke + dark coloured edge + translucent fill)
     ax.plot(theta_closed, Ar, color="white", lw=5.0, zorder=5)
-    ax.plot(theta_closed, Ar, color=COL_A,   lw=2.2, zorder=6)
+    ax.plot(theta_closed, Ar, color=COL_A, lw=2.2, zorder=6)
     ax.fill(theta_closed, Ar, color=FILL_A, zorder=4)
 
     ax.plot(theta_closed, Br, color="white", lw=5.0, zorder=5)
-    ax.plot(theta_closed, Br, color=COL_B,   lw=2.2, zorder=6)
+    ax.plot(theta_closed, Br, color=COL_B, lw=2.2, zorder=6)
     ax.fill(theta_closed, Br, color=FILL_B, zorder=4)
 
     ax.set_rlim(0, 105)
@@ -252,6 +253,7 @@ fig.savefig(buf_svg, format="svg", bbox_inches="tight")
 st.download_button("⬇️ Download SVG", data=buf_svg.getvalue(),
                    file_name=f"{pA.replace(' ','_')}_vs_{pB.replace(' ','_')}_radar_SB.svg",
                    mime="image/svg+xml")
+
 
 
 
