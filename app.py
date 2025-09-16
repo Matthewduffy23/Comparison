@@ -1,4 +1,4 @@
-# app.py — SB-style radar (grey annulus bands • solid fills • no spokes)
+# app.py — SB-style radar (grey annulus bands • solid fills • no spokes • subtle tick labels)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -11,26 +11,27 @@ import re
 st.set_page_config(page_title="Player Comparison — SB Radar", layout="wide")
 
 # ---------------- Theme ----------------
-# Dark, saturated lines; solid, prominent fills
 COL_A = "#C81E1E"          # deep red
 COL_B = "#1D4ED8"          # deep blue
 FILL_A = (200/255, 30/255, 30/255, 0.60)   # solid-ish fill
 FILL_B = (29/255, 78/255, 216/255, 0.60)
 
-PAGE_BG   = "#FFFFFF"      # figure background
-AX_BG     = "#FFFFFF"      # axes background
+PAGE_BG   = "#FFFFFF"
+AX_BG     = "#FFFFFF"
 
-# StatsBomb-like grid: alternating grey bands + faint ring edges
 GRID_BAND_A = "#F3F4F6"    # gray-100
-GRID_BAND_B = "#E9EDF2"    # very light cool gray
+GRID_BAND_B = "#ECEFF3"    # cool gray
 RING_COLOR  = "#D1D5DB"    # gray-300
 RING_LW     = 1.0
 
-LABEL_COLOR = "#0F172A"    # near-black for labels/titles
+LABEL_COLOR = "#0F172A"
 TITLE_FS    = 26
 SUB_FS      = 12
 AXIS_FS     = 10
-TICK_FS     = 8
+
+# subtle numeric tick labels
+TICK_FS     = 7
+TICK_COLOR  = "#9CA3AF"    # gray-400
 
 NUM_RINGS   = 10
 INNER_HOLE  = 10
@@ -159,7 +160,6 @@ def normalize(vals, mn, mx):
 A_r = normalize(A_val, axis_min, axis_max) * 100
 B_r = normalize(B_val, axis_min, axis_max) * 100
 
-# Pool average (for overlay)
 AVG_val = pool[metrics].mean().values
 AVG_r   = normalize(AVG_val, axis_min, axis_max) * 100
 
@@ -176,7 +176,7 @@ if sort_by_gap:
     AVG_val = AVG_val[order]
     axis_min = axis_min[order]; axis_max = axis_max[order]
 
-# Ring radii and per-spoke ticks (we'll hide the ticks to keep SB-clean look)
+# radii & (hidden) tick values; we’ll render tiny labels instead
 ring_radii = np.linspace(INNER_HOLE, 100, NUM_RINGS)
 axis_ticks = [np.linspace(axis_min[i], axis_max[i], NUM_RINGS) for i in range(len(labels))]
 
@@ -197,15 +197,15 @@ def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB,
     ax.set_theta_offset(np.pi/2)
     ax.set_theta_direction(-1)
 
-    # Labels around the perimeter
+    # Perimeter labels; no polar grid/spokes
     ax.set_xticks(theta)
     ax.set_xticklabels(labels, fontsize=AXIS_FS, color=LABEL_COLOR, fontweight=600)
     ax.set_yticks([])
+    ax.grid(False)
     for s in ax.spines.values():
         s.set_visible(False)
 
-    # ---- StatsBomb-like background ----
-    # Alternating annulus bands (no radial spokes)
+    # Alternating annulus bands (SB look)
     for i in range(NUM_RINGS-1):
         r0, r1 = ring_radii[i], ring_radii[i+1]
         band = GRID_BAND_A if i % 2 == 0 else GRID_BAND_B
@@ -213,21 +213,29 @@ def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB,
                             transform=ax.transData._b, facecolor=band,
                             edgecolor="none", zorder=0.8))
 
-    # Subtle ring outlines
+    # Subtle ring outlines only
     ring_t = np.linspace(0, 2*np.pi, 361)
     for r in ring_radii:
         ax.plot(ring_t, np.full_like(ring_t, r), color=RING_COLOR, lw=RING_LW, zorder=0.9)
 
+    # Tiny, light numeric labels from the 3rd ring outward
+    start_idx = 2  # 0-based; show at rings 2..9 => 3rd ring onwards
+    for i, ang in enumerate(theta):
+        vals = ticks[i][start_idx:]
+        for rr, v in zip(ring_radii[start_idx:], vals):
+            ax.text(ang, rr-1.8, f"{v:.1f}", ha="center", va="center",
+                    fontsize=TICK_FS, color=TICK_COLOR, zorder=1.1)
+
     # Clean inner hole
     ax.add_artist(Circle((0,0), radius=INNER_HOLE-0.6, transform=ax.transData._b,
-                         color=PAGE_BG, zorder=1, ec="none"))
+                         color=PAGE_BG, zorder=1.2, ec="none"))
 
-    # --- Optional pool average (thin line, no fill) ---
+    # Optional pool average (thin line)
     if show_avg and AVG_r is not None:
         Avg = np.concatenate([AVG_r, AVG_r[:1]])
-        ax.plot(theta_closed, Avg, lw=1.6, color="#6B7280", ls="--", alpha=0.95, zorder=2.2)
+        ax.plot(theta_closed, Avg, lw=1.5, color="#94A3B8", ls="--", alpha=0.9, zorder=2.2)
 
-    # --- Player polygons (dark border, solid fills) ---
+    # Player polygons — solid fills, dark borders
     ax.plot(theta_closed, Ar, color=COL_A, lw=2.2, zorder=3)
     ax.fill(theta_closed, Ar, color=FILL_A, zorder=2.5)
 
@@ -242,7 +250,6 @@ def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB,
     fig.text(0.88, 0.96, headerB, color=COL_B, fontsize=TITLE_FS, fontweight="bold", ha="right")
     fig.text(0.88, 0.935, subB,   color=COL_B, fontsize=SUB_FS,      ha="right")
 
-    # Legend hint for average
     if show_avg and AVG_r is not None:
         fig.text(0.5, 0.09, "— Pool average", color="#6B7280", fontsize=10, ha="center")
 
@@ -269,3 +276,4 @@ fig.savefig(buf_svg, format="svg", bbox_inches="tight")
 st.download_button("⬇️ Download SVG", data=buf_svg.getvalue(),
                    file_name=f"{pA.replace(' ','_')}_vs_{pB.replace(' ','_')}_radar_SB.svg",
                    mime="image/svg+xml")
+
