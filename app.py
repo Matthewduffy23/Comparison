@@ -21,8 +21,8 @@ FILL_B = (29/255, 78/255, 216/255, 0.60)
 PAGE_BG   = "#FFFFFF"
 AX_BG     = "#FFFFFF"
 
-GRID_BAND_A = "#E5E7EB"    # light gray band
-GRID_BAND_B = "#FFFFFF"    # white band
+GRID_BAND_A = "#FFFFFF"    # light gray band
+GRID_BAND_B = "#E5E7EB"    # white band
 RING_COLOR  = "#D1D5DB"    # ring outlines
 RING_LW     = 1.0
 
@@ -254,7 +254,7 @@ def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB,
     fig.text(0.88, 0.935, subB,   color=COL_B, fontsize=SUB_FS,      ha="right")
 
     if show_avg and AVG_r is not None:
-        fig.text(0.5, 0.09, "— Pool average (50th percentile)", color="#6B7280", fontsize=10, ha="center")
+        fig.text(0.5, 0.92, "— Average / 50th Percentile", color="#6B7280", fontsize=8, ha="center")
 
     return fig
 
