@@ -21,8 +21,8 @@ FILL_B = (29/255, 78/255, 216/255, 0.60)
 PAGE_BG   = "#FFFFFF"
 AX_BG     = "#FFFFFF"
 
-GRID_BAND_A = "#FFFFFF"    # light gray band
-GRID_BAND_B = "#E5E7EB"    # white band
+GRID_BAND_A = "#FFFFFF"    # white band
+GRID_BAND_B = "#E5E7EB"    # light gray band
 RING_COLOR  = "#D1D5DB"    # ring outlines
 RING_LW     = 1.0
 
@@ -183,8 +183,20 @@ if sort_by_gap:
     axis_max = axis_max[order]
     axis_ticks = [axis_ticks[i] for i in order]
 
+# ----- Minutes subtitle text -----
+def fmt_minutes(x):
+    try:
+        if pd.notna(x):
+            return f"{int(round(float(x))):,} mins"
+    except Exception:
+        pass
+    return "Minutes: N/A"
+
+minsA = fmt_minutes(rowA.get("Minutes played"))
+minsB = fmt_minutes(rowB.get("Minutes played"))
+
 # -------------- Radar drawer --------------
-def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB,
+def draw_radar(labels, A_r, B_r, ticks, headerA, subA, subA2, headerB, subB, subB2,
                show_avg=False, AVG_r=None):
     N = len(labels)
     theta = np.linspace(0, 2*np.pi, N, endpoint=False)
@@ -247,23 +259,28 @@ def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB,
 
     ax.set_rlim(0, 105)
 
-    # Headers
-    fig.text(0.12, 0.96, headerA, color=COL_A, fontsize=TITLE_FS, fontweight="bold", ha="left")
+    # Headers + two subtitle lines + minutes line
+    fig.text(0.12, 0.96,  headerA, color=COL_A, fontsize=TITLE_FS, fontweight="bold", ha="left")
     fig.text(0.12, 0.935, subA,    color=COL_A, fontsize=SUB_FS,      ha="left")
-    fig.text(0.88, 0.96, headerB, color=COL_B, fontsize=TITLE_FS, fontweight="bold", ha="right")
-    fig.text(0.88, 0.935, subB,   color=COL_B, fontsize=SUB_FS,      ha="right")
+    fig.text(0.12, 0.915, subA2,   color=COL_A, fontsize=SUB_FS,      ha="left")
+
+    fig.text(0.88, 0.96,  headerB, color=COL_B, fontsize=TITLE_FS, fontweight="bold", ha="right")
+    fig.text(0.88, 0.935, subB,    color=COL_B, fontsize=SUB_FS,      ha="right")
+    fig.text(0.88, 0.915, subB2,   color=COL_B, fontsize=SUB_FS,      ha="right")
 
     if show_avg and AVG_r is not None:
-        fig.text(0.2, 0.1, "— Average / 50th Percentile | Stats per 90", color="#6B7280", fontsize=6, ha="center")
+        fig.text(0.2, 0.1, "— Average / 50th Percentile | Stats per 90", color="#6B7280", fontsize=8, ha="center")
 
     return fig
 
 headerA = f"{pA}"
 subA    = f"{rowA['Team']} — {rowA['League']}"
+subA2   = f"{minsA}"
 headerB = f"{pB}"
 subB    = f"{rowB['Team']} — {rowB['League']}"
+subB2   = f"{minsB}"
 
-fig = draw_radar(labels, A_r, B_r, axis_ticks, headerA, subA, headerB, subB,
+fig = draw_radar(labels, A_r, B_r, axis_ticks, headerA, subA, subA2, headerB, subB, subB2,
                  show_avg=show_avg, AVG_r=AVG_r)
 st.pyplot(fig, use_container_width=True)
 
@@ -279,8 +296,3 @@ fig.savefig(buf_svg, format="svg", bbox_inches="tight")
 st.download_button("⬇️ Download SVG", data=buf_svg.getvalue(),
                    file_name=f"{pA.replace(' ','_')}_vs_{pB.replace(' ','_')}_radar_SB.svg",
                    mime="image/svg+xml")
-
-
-
-
-
