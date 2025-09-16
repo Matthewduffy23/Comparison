@@ -1,9 +1,9 @@
-# app.py — SB-style radar (clean white/grey grid • darker lines • optional average)
+# app.py — SB-style radar (grey annulus bands • solid fills • no spokes)
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import Circle
+from matplotlib.patches import Circle, Wedge
 from pathlib import Path
 import io
 import re
@@ -11,28 +11,29 @@ import re
 st.set_page_config(page_title="Player Comparison — SB Radar", layout="wide")
 
 # ---------------- Theme ----------------
-# Dark, saturated team colors; slightly richer fills
-COL_A = "#B11F1B"          # darker SB red
-COL_B = "#184F9B"          # darker SB blue
-FILL_A = (177/255, 31/255, 27/255, 0.28)
-FILL_B = (24/255, 79/255, 155/255, 0.28)
+# Dark, saturated lines; solid, prominent fills
+COL_A = "#C81E1E"          # deep red
+COL_B = "#1D4ED8"          # deep blue
+FILL_A = (200/255, 30/255, 30/255, 0.60)   # solid-ish fill
+FILL_B = (29/255, 78/255, 216/255, 0.60)
 
 PAGE_BG   = "#FFFFFF"      # figure background
-AX_BG     = "#FFFFFF"      # axes background (kept white)
+AX_BG     = "#FFFFFF"      # axes background
 
-# SB-like grid: light grey rings + rays, no sector fill
-RAY_COLOR  = "#D1D5DB"     # gray-300
-RING_COLOR = "#E5E7EB"     # gray-200
-RING_LW    = 1.1
+# StatsBomb-like grid: alternating grey bands + faint ring edges
+GRID_BAND_A = "#F3F4F6"    # gray-100
+GRID_BAND_B = "#E9EDF2"    # very light cool gray
+RING_COLOR  = "#D1D5DB"    # gray-300
+RING_LW     = 1.0
 
-LABEL_COLOR = "#111827"    # near-black for labels
+LABEL_COLOR = "#0F172A"    # near-black for labels/titles
 TITLE_FS    = 26
 SUB_FS      = 12
-AXIS_FS     = 10           # axis label size
-TICK_FS     = 8            # per-ring tick size
+AXIS_FS     = 10
+TICK_FS     = 8
 
-NUM_RINGS   = 10           # 10 separation rings
-INNER_HOLE  = 10           # small hole in the middle
+NUM_RINGS   = 10
+INNER_HOLE  = 10
 
 # -------------- Data ---------------
 @st.cache_data(show_spinner=False)
@@ -107,7 +108,7 @@ with st.sidebar:
         st.stop()
 
     sort_by_gap = st.checkbox("Sort axes by biggest gap", False)
-    show_avg    = st.checkbox("Show pool average", True)
+    show_avg    = st.checkbox("Show pool average (thin line)", True)
 
 # -------------- Pool & arrays --------------
 try:
@@ -175,7 +176,7 @@ if sort_by_gap:
     AVG_val = AVG_val[order]
     axis_min = axis_min[order]; axis_max = axis_max[order]
 
-# 1-decimal axis ticks per spoke (10 rings)
+# Ring radii and per-spoke ticks (we'll hide the ticks to keep SB-clean look)
 ring_radii = np.linspace(INNER_HOLE, 100, NUM_RINGS)
 axis_ticks = [np.linspace(axis_min[i], axis_max[i], NUM_RINGS) for i in range(len(labels))]
 
@@ -196,48 +197,42 @@ def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB,
     ax.set_theta_offset(np.pi/2)
     ax.set_theta_direction(-1)
 
-    # Labels
+    # Labels around the perimeter
     ax.set_xticks(theta)
     ax.set_xticklabels(labels, fontsize=AXIS_FS, color=LABEL_COLOR, fontweight=600)
     ax.set_yticks([])
     for s in ax.spines.values():
         s.set_visible(False)
 
-    # ---- Clean SB-like grid (no sector fills) ----
-    # Rays
-    for ang in theta:
-        ax.plot([ang, ang], [INNER_HOLE, 100], color=RAY_COLOR, lw=1.0, zorder=1)
+    # ---- StatsBomb-like background ----
+    # Alternating annulus bands (no radial spokes)
+    for i in range(NUM_RINGS-1):
+        r0, r1 = ring_radii[i], ring_radii[i+1]
+        band = GRID_BAND_A if i % 2 == 0 else GRID_BAND_B
+        ax.add_artist(Wedge((0,0), r1, 0, 360, width=(r1-r0),
+                            transform=ax.transData._b, facecolor=band,
+                            edgecolor="none", zorder=0.8))
 
-    # Rings
+    # Subtle ring outlines
     ring_t = np.linspace(0, 2*np.pi, 361)
     for r in ring_radii:
-        ax.plot(ring_t, np.full_like(ring_t, r), color=RING_COLOR, lw=RING_LW, zorder=1)
+        ax.plot(ring_t, np.full_like(ring_t, r), color=RING_COLOR, lw=RING_LW, zorder=0.9)
 
-    # Perc-spoke numeric ticks from ring 3 outward (1 decimal)
-    start_idx = 2  # 0-based -> show from 3rd ring
-    for i, ang in enumerate(theta):
-        vals = ticks[i][start_idx:]
-        for rr, v in zip(ring_radii[start_idx:], vals):
-            ax.text(ang, rr-2.0, f"{v:.1f}", ha="center", va="center",
-                    fontsize=TICK_FS, color="#6B7280", rotation=0, zorder=2)
+    # Clean inner hole
+    ax.add_artist(Circle((0,0), radius=INNER_HOLE-0.6, transform=ax.transData._b,
+                         color=PAGE_BG, zorder=1, ec="none"))
 
-    # Subtle inner hole (keeps middle clean)
-    ax.add_artist(Circle((0,0), radius=INNER_HOLE-0.5, transform=ax.transData._b,
-                         color=PAGE_BG, zorder=3, ec="none"))
-
-    # Average overlay
+    # --- Optional pool average (thin line, no fill) ---
     if show_avg and AVG_r is not None:
         Avg = np.concatenate([AVG_r, AVG_r[:1]])
-        ax.plot(theta_closed, Avg, lw=1.6, color="#6B7280", ls="--", alpha=0.95, zorder=4)
+        ax.plot(theta_closed, Avg, lw=1.6, color="#6B7280", ls="--", alpha=0.95, zorder=2.2)
 
-    # Player polygons (bold, with white halo)
-    ax.plot(theta_closed, Ar, color="white", lw=5.5, zorder=5)
-    ax.plot(theta_closed, Ar, color=COL_A, lw=2.6, zorder=6)
-    ax.fill(theta_closed, Ar, color=FILL_A, zorder=5)
+    # --- Player polygons (dark border, solid fills) ---
+    ax.plot(theta_closed, Ar, color=COL_A, lw=2.2, zorder=3)
+    ax.fill(theta_closed, Ar, color=FILL_A, zorder=2.5)
 
-    ax.plot(theta_closed, Br, color="white", lw=5.5, zorder=5)
-    ax.plot(theta_closed, Br, color=COL_B, lw=2.6, zorder=6)
-    ax.fill(theta_closed, Br, color=FILL_B, zorder=5)
+    ax.plot(theta_closed, Br, color=COL_B, lw=2.2, zorder=3)
+    ax.fill(theta_closed, Br, color=FILL_B, zorder=2.5)
 
     ax.set_rlim(0, 105)
 
@@ -247,7 +242,7 @@ def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB,
     fig.text(0.88, 0.96, headerB, color=COL_B, fontsize=TITLE_FS, fontweight="bold", ha="right")
     fig.text(0.88, 0.935, subB,   color=COL_B, fontsize=SUB_FS,      ha="right")
 
-    # Small legend note for average
+    # Legend hint for average
     if show_avg and AVG_r is not None:
         fig.text(0.5, 0.09, "— Pool average", color="#6B7280", fontsize=10, ha="center")
 
