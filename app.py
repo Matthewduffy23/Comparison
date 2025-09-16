@@ -57,14 +57,14 @@ if missing:
     st.stop()
 
 DEFAULT_METRICS = [
-    "Non-penalty goals per 90","xG per 90","Shots per 90","Shots on target, %",
+    "Non-penalty goals per 90","xG per 90","Shots per 90",
     "Dribbles per 90","Successful dribbles, %","Touches in box per 90",
     "Aerial duels per 90","Aerial duels won, %","Passes per 90",
     "Accurate passes, %","xA per 90"
 ]
 
 def clean_label(s: str) -> str:
-    s = s.replace("Non-penalty goals per 90", "NP goals")
+    s = s.replace("Non-penalty goals per 90", "Non-Pen Goals")
     s = s.replace("xG per 90", "xG").replace("xA per 90", "xA")
     s = s.replace("Shots per 90", "Shots")
     s = s.replace("Passes per 90", "Passes")
