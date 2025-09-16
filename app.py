@@ -1,9 +1,9 @@
-# app.py — SB-style radar (contrasting sectors • 10 rings • 1-dec ticks from ring 3)
+# app.py — SB-style radar (clean white/grey grid • darker lines • optional average)
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import Wedge, Circle
+from matplotlib.patches import Circle
 from pathlib import Path
 import io
 import re
@@ -11,30 +11,28 @@ import re
 st.set_page_config(page_title="Player Comparison — SB Radar", layout="wide")
 
 # ---------------- Theme ----------------
-COL_A = "#DF3B37"          # dark SB red
-COL_B = "#2D6DB7"          # dark SB blue
-FILL_A = (223/255, 59/255, 55/255, 0.22)
-FILL_B = (45/255, 109/255, 183/255, 0.22)
+# Dark, saturated team colors; slightly richer fills
+COL_A = "#B11F1B"          # darker SB red
+COL_B = "#184F9B"          # darker SB blue
+FILL_A = (177/255, 31/255, 27/255, 0.28)
+FILL_B = (24/255, 79/255, 155/255, 0.28)
 
-PAGE_BG   = "#FFFFFF"
-DISC_BG   = "#E7EBF1"
+PAGE_BG   = "#FFFFFF"      # figure background
+AX_BG     = "#FFFFFF"      # axes background (kept white)
 
-# Stronger alternating sector contrast
-SECTOR_A  = "#F5F7FA"
-SECTOR_B  = "#E9EEF5"
+# SB-like grid: light grey rings + rays, no sector fill
+RAY_COLOR  = "#D1D5DB"     # gray-300
+RING_COLOR = "#E5E7EB"     # gray-200
+RING_LW    = 1.1
 
-RAY_COLOR = "#CFD5DD"
-RING_COLOR= "#C1C8D1"
-RING_LW   = 1.0
-
-LABEL_COLOR = "#0F172A"
+LABEL_COLOR = "#111827"    # near-black for labels
 TITLE_FS    = 26
 SUB_FS      = 12
-AXIS_FS     = 10         # smaller axis labels
-TICK_FS     = 8          # smaller tick labels
+AXIS_FS     = 10           # axis label size
+TICK_FS     = 8            # per-ring tick size
 
-NUM_RINGS   = 10         # 10 separation rings
-INNER_HOLE  = 10         # keep a small hole in the middle
+NUM_RINGS   = 10           # 10 separation rings
+INNER_HOLE  = 10           # small hole in the middle
 
 # -------------- Data ---------------
 @st.cache_data(show_spinner=False)
@@ -71,8 +69,8 @@ def clean_label(s: str) -> str:
     s = s.replace("Touches in box per 90", "Touches in box")
     s = s.replace("Aerial duels per 90", "Aerial duels")
     s = s.replace("Successful dribbles, %", "Dribble %")
-    s = s.replace("Accurate passes, %", "Pass %")
     s = s.replace("Shots on target, %", "SoT %")
+    s = s.replace("Accurate passes, %", "Pass %")
     s = re.sub(r"\s*per\s*90", "", s, flags=re.I)
     return s
 
@@ -109,6 +107,7 @@ with st.sidebar:
         st.stop()
 
     sort_by_gap = st.checkbox("Sort axes by biggest gap", False)
+    show_avg    = st.checkbox("Show pool average", True)
 
 # -------------- Pool & arrays --------------
 try:
@@ -159,15 +158,21 @@ def normalize(vals, mn, mx):
 A_r = normalize(A_val, axis_min, axis_max) * 100
 B_r = normalize(B_val, axis_min, axis_max) * 100
 
+# Pool average (for overlay)
+AVG_val = pool[metrics].mean().values
+AVG_r   = normalize(AVG_val, axis_min, axis_max) * 100
+
 labels = [clean_label(m) for m in metrics]
 
 if sort_by_gap:
     order = np.argsort(-np.abs(A_r - B_r))
-    labels = [labels[i] for i in order]
-    A_r    = A_r[order]
-    B_r    = B_r[order]
-    A_val  = A_val[order]
-    B_val  = B_val[order]
+    labels  = [labels[i] for i in order]
+    A_r     = A_r[order]
+    B_r     = B_r[order]
+    A_val   = A_val[order]
+    B_val   = B_val[order]
+    AVG_r   = AVG_r[order]
+    AVG_val = AVG_val[order]
     axis_min = axis_min[order]; axis_max = axis_max[order]
 
 # 1-decimal axis ticks per spoke (10 rings)
@@ -175,7 +180,8 @@ ring_radii = np.linspace(INNER_HOLE, 100, NUM_RINGS)
 axis_ticks = [np.linspace(axis_min[i], axis_max[i], NUM_RINGS) for i in range(len(labels))]
 
 # -------------- Radar drawer --------------
-def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB):
+def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB,
+               show_avg=False, AVG_r=None):
     N = len(labels)
     theta = np.linspace(0, 2*np.pi, N, endpoint=False)
     theta_closed = np.concatenate([theta, theta[:1]])
@@ -186,61 +192,64 @@ def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB):
     fig.patch.set_facecolor(PAGE_BG)
 
     ax = plt.subplot(111, polar=True)
-    ax.set_facecolor(PAGE_BG)
+    ax.set_facecolor(AX_BG)
     ax.set_theta_offset(np.pi/2)
     ax.set_theta_direction(-1)
 
+    # Labels
     ax.set_xticks(theta)
     ax.set_xticklabels(labels, fontsize=AXIS_FS, color=LABEL_COLOR, fontweight=600)
     ax.set_yticks([])
-    for s in ax.spines.values(): s.set_visible(False)
+    for s in ax.spines.values():
+        s.set_visible(False)
 
-    disc = Circle((0,0), radius=102, transform=ax.transData._b, color=DISC_BG, zorder=0)
-    ax.add_artist(disc)
-
-    # alternating sectors (more contrast)
-    bounds = np.linspace(0, 2*np.pi, N, endpoint=False)
-    bounds = np.concatenate([bounds, [bounds[0] + 2*np.pi/N]])
-    starts = (bounds[:-1] - (np.pi/N)/2)
-    ends   = (bounds[:-1] + (np.pi/N)/2)
-    for i in range(N):
-        color = SECTOR_A if i % 2 == 0 else SECTOR_B
-        ax.add_artist(Wedge((0,0), 100, np.degrees(starts[i]), np.degrees(ends[i]),
-                            width=100, facecolor=color, edgecolor="none", zorder=1.2))
-
-    # spoke rays
+    # ---- Clean SB-like grid (no sector fills) ----
+    # Rays
     for ang in theta:
-        ax.plot([ang, ang], [INNER_HOLE, 100], color=RAY_COLOR, lw=1.0, zorder=2)
+        ax.plot([ang, ang], [INNER_HOLE, 100], color=RAY_COLOR, lw=1.0, zorder=1)
 
-    # 10 rings
+    # Rings
     ring_t = np.linspace(0, 2*np.pi, 361)
     for r in ring_radii:
-        ax.plot(ring_t, np.full_like(ring_t, r), color=RING_COLOR, lw=RING_LW, zorder=2)
+        ax.plot(ring_t, np.full_like(ring_t, r), color=RING_COLOR, lw=RING_LW, zorder=1)
 
-    # per-spoke value ticks: 1 decimal, from 3rd ring outward only
-    start_idx = 2  # 0-based: show rings index 2..9 (i.e., from 3rd ring)
+    # Perc-spoke numeric ticks from ring 3 outward (1 decimal)
+    start_idx = 2  # 0-based -> show from 3rd ring
     for i, ang in enumerate(theta):
         vals = ticks[i][start_idx:]
         for rr, v in zip(ring_radii[start_idx:], vals):
             ax.text(ang, rr-2.0, f"{v:.1f}", ha="center", va="center",
-                    fontsize=TICK_FS, color="#5B6470", rotation=0, zorder=3)
+                    fontsize=TICK_FS, color="#6B7280", rotation=0, zorder=2)
 
-    # polygons
-    ax.plot(theta_closed, Ar, color="white", lw=5.0, zorder=5)
-    ax.plot(theta_closed, Ar, color=COL_A, lw=2.2, zorder=6)
-    ax.fill(theta_closed, Ar, color=FILL_A, zorder=4)
+    # Subtle inner hole (keeps middle clean)
+    ax.add_artist(Circle((0,0), radius=INNER_HOLE-0.5, transform=ax.transData._b,
+                         color=PAGE_BG, zorder=3, ec="none"))
 
-    ax.plot(theta_closed, Br, color="white", lw=5.0, zorder=5)
-    ax.plot(theta_closed, Br, color=COL_B, lw=2.2, zorder=6)
-    ax.fill(theta_closed, Br, color=FILL_B, zorder=4)
+    # Average overlay
+    if show_avg and AVG_r is not None:
+        Avg = np.concatenate([AVG_r, AVG_r[:1]])
+        ax.plot(theta_closed, Avg, lw=1.6, color="#6B7280", ls="--", alpha=0.95, zorder=4)
+
+    # Player polygons (bold, with white halo)
+    ax.plot(theta_closed, Ar, color="white", lw=5.5, zorder=5)
+    ax.plot(theta_closed, Ar, color=COL_A, lw=2.6, zorder=6)
+    ax.fill(theta_closed, Ar, color=FILL_A, zorder=5)
+
+    ax.plot(theta_closed, Br, color="white", lw=5.5, zorder=5)
+    ax.plot(theta_closed, Br, color=COL_B, lw=2.6, zorder=6)
+    ax.fill(theta_closed, Br, color=FILL_B, zorder=5)
 
     ax.set_rlim(0, 105)
 
-    # headers
+    # Headers
     fig.text(0.12, 0.96, headerA, color=COL_A, fontsize=TITLE_FS, fontweight="bold", ha="left")
     fig.text(0.12, 0.935, subA,    color=COL_A, fontsize=SUB_FS,      ha="left")
     fig.text(0.88, 0.96, headerB, color=COL_B, fontsize=TITLE_FS, fontweight="bold", ha="right")
     fig.text(0.88, 0.935, subB,   color=COL_B, fontsize=SUB_FS,      ha="right")
+
+    # Small legend note for average
+    if show_avg and AVG_r is not None:
+        fig.text(0.5, 0.09, "— Pool average", color="#6B7280", fontsize=10, ha="center")
 
     return fig
 
@@ -249,7 +258,8 @@ subA    = f"{rowA['Team']} — {rowA['League']}"
 headerB = f"{pB}"
 subB    = f"{rowB['Team']} — {rowB['League']}"
 
-fig = draw_radar(labels, A_r, B_r, axis_ticks, headerA, subA, headerB, subB)
+fig = draw_radar(labels, A_r, B_r, axis_ticks, headerA, subA, headerB, subB,
+                 show_avg=show_avg, AVG_r=AVG_r)
 st.pyplot(fig, use_container_width=True)
 
 # -------------- Exports --------------
@@ -264,16 +274,3 @@ fig.savefig(buf_svg, format="svg", bbox_inches="tight")
 st.download_button("⬇️ Download SVG", data=buf_svg.getvalue(),
                    file_name=f"{pA.replace(' ','_')}_vs_{pB.replace(' ','_')}_radar_SB.svg",
                    mime="image/svg+xml")
-
-
-
-
-
-
-
-
-
-
-
-
-
