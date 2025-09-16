@@ -35,6 +35,10 @@ AXIS_FS     = 10
 TICK_FS     = 7
 TICK_COLOR  = "#9CA3AF"    # gray-400
 
+# minutes subtitle styling
+MINUTES_FS    = 10
+MINUTES_COLOR = "#374151"  # gray-700
+
 NUM_RINGS   = 11           # 0,10,...,100 (clean percentile geometry)
 INNER_HOLE  = 10
 
@@ -259,17 +263,19 @@ def draw_radar(labels, A_r, B_r, ticks, headerA, subA, subA2, headerB, subB, sub
 
     ax.set_rlim(0, 105)
 
-    # Headers + two subtitle lines + minutes line
+    # Headers + league line + minutes line (minutes smaller & dark grey)
     fig.text(0.12, 0.96,  headerA, color=COL_A, fontsize=TITLE_FS, fontweight="bold", ha="left")
     fig.text(0.12, 0.935, subA,    color=COL_A, fontsize=SUB_FS,      ha="left")
-    fig.text(0.12, 0.915, subA2,   color=COL_A, fontsize=SUB_FS,      ha="left")
+    fig.text(0.12, 0.915, subA2,   color=MINUTES_COLOR, fontsize=MINUTES_FS, ha="left")
 
     fig.text(0.88, 0.96,  headerB, color=COL_B, fontsize=TITLE_FS, fontweight="bold", ha="right")
     fig.text(0.88, 0.935, subB,    color=COL_B, fontsize=SUB_FS,      ha="right")
-    fig.text(0.88, 0.915, subB2,   color=COL_B, fontsize=SUB_FS,      ha="right")
+    fig.text(0.88, 0.915, subB2,   color=MINUTES_COLOR, fontsize=MINUTES_FS, ha="right")
 
+    # Caption
     if show_avg and AVG_r is not None:
-        fig.text(0.2, 0.1, "— Average / 50th Percentile | Stats per 90", color="#6B7280", fontsize=8, ha="center")
+        fig.text(0.2, 0.1, "— Average / 50th Percentile | Stats per 90",
+                 color="#6B7280", fontsize=8, ha="center")
 
     return fig
 
@@ -296,3 +302,4 @@ fig.savefig(buf_svg, format="svg", bbox_inches="tight")
 st.download_button("⬇️ Download SVG", data=buf_svg.getvalue(),
                    file_name=f"{pA.replace(' ','_')}_vs_{pB.replace(' ','_')}_radar_SB.svg",
                    mime="image/svg+xml")
+
