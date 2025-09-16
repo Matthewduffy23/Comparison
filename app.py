@@ -1,4 +1,4 @@
-# app.py — SB-style radar (grey annulus bands • solid fills • no spokes • subtle tick labels • PERCENTILES 0–100)
+# app.py — SB-style radar (grey annulus bands • solid fills • no spokes • subtle tick labels • PERCENTILES 0–100 • 11 rings)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -19,10 +19,9 @@ FILL_B = (29/255, 78/255, 216/255, 0.60)
 PAGE_BG   = "#FFFFFF"
 AX_BG     = "#FFFFFF"
 
-# Bands + ring outlines (you can flip A/B if you prefer the other way round)
-GRID_BAND_A = "#E5E7EB"    # light gray
-GRID_BAND_B = "#FFFFFF"    # white
-RING_COLOR  = "#D1D5DB"    # ring strokes
+GRID_BAND_A = "#E5E7EB"    # light gray band
+GRID_BAND_B = "#FFFFFF"    # white band
+RING_COLOR  = "#D1D5DB"    # ring outlines
 RING_LW     = 1.0
 
 LABEL_COLOR = "#0F172A"
@@ -34,7 +33,7 @@ AXIS_FS     = 10
 TICK_FS     = 7
 TICK_COLOR  = "#9CA3AF"    # gray-400
 
-NUM_RINGS   = 10
+NUM_RINGS   = 11           # <-- Option A: rings at 0,10,20,...,100
 INNER_HOLE  = 10
 
 # -------------- Data ---------------
@@ -88,7 +87,7 @@ with st.sidebar:
     min_minutes, max_minutes = st.slider("Minutes filter", 0, 5000, (500, 5000))
     min_age, max_age         = st.slider(
         "Age filter",
-        int(np.nanmin(df["Age"]) if pd.notna(df["Age"]).any() else 14),
+        int(np.nanmin(df["Age"]) if pd.notna(df["Age']).any() else 14),
         int(np.nanmax(df["Age"]) if pd.notna(df["Age"]).any() else 40),
         (16, 33)
     )
@@ -120,7 +119,7 @@ except IndexError:
     st.error("Selected player not found.")
     st.stop()
 
-# Pool limited to shared leagues + filters (same as before)
+# Pool limited to shared leagues + filters
 union_leagues = {rowA["League"], rowB["League"]}
 pool = df[
     (df["League"].isin(union_leagues)) &
@@ -145,32 +144,30 @@ if pool.empty:
 labels = [clean_label(m) for m in metrics]
 
 # ---- Percentile scaling (0–100) ----
-# Rank each metric column within the *current pool* to get percentiles.
-# pct=True returns 0..1; multiply by 100 for 0..100.
-pool_pct = pool[metrics].rank(pct=True) * 100.0
+pool_pct = pool[metrics].rank(pct=True) * 100.0  # 0..100 within the pool
 
 def pct_for(player: str) -> np.ndarray:
     sub_idx = pool[pool["Player"] == player].index
     if len(sub_idx) == 0:
         return np.full(len(metrics), np.nan)
-    # If the player has multiple rows, take the mean of their percentile rows
+    # If multiple rows for a player, average their percentile rows
     return pool_pct.loc[sub_idx, :].mean(axis=0).values
 
 A_r = pct_for(pA)
 B_r = pct_for(pB)
 
-# Pool "average" as the 50th percentile line
+# Pool "average" as 50th percentile line
 AVG_r = np.full(len(metrics), 50.0)
 
-# Sort axes by gap if requested (uses percentile gap)
+# Sort axes by percentile gap if requested
 if sort_by_gap:
     order = np.argsort(-np.abs(A_r - B_r))
     labels = [labels[i] for i in order]
     A_r    = A_r[order]
     B_r    = B_r[order]
-    AVG_r  = AVG_r[order]  # still 50s, but keep shape consistent
+    AVG_r  = AVG_r[order]
 
-# Radii for 10 rings and tick labels now in percentiles
+# Radii for 11 rings (0..100 by tens) and tick values in tens
 ring_radii = np.linspace(INNER_HOLE, 100, NUM_RINGS)
 axis_ticks = [np.linspace(0, 100, NUM_RINGS) for _ in range(len(labels))]
 
@@ -212,12 +209,12 @@ def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB,
     for r in ring_radii:
         ax.plot(ring_t, np.full_like(ring_t, r), color=RING_COLOR, lw=RING_LW, zorder=0.9)
 
-    # Tiny, light numeric labels from the 3rd ring outward (percentiles)
-    start_idx = 2  # 0-based; show from 3rd ring outwards
+    # Tiny, light numeric labels from the 3rd ring outward (20..100)
+    start_idx = 2  # 0-based; so rings 2..10 => 20..100
     for i, ang in enumerate(theta):
         vals = ticks[i][start_idx:]
         for rr, v in zip(ring_radii[start_idx:], vals):
-            ax.text(ang, rr-1.8, f"{v:.1f}", ha="center", va="center",
+            ax.text(ang, rr-1.8, f"{v:.0f}", ha="center", va="center",  # integers
                     fontsize=TICK_FS, color=TICK_COLOR, zorder=1.1)
 
     # Clean inner hole
@@ -270,6 +267,7 @@ fig.savefig(buf_svg, format="svg", bbox_inches="tight")
 st.download_button("⬇️ Download SVG", data=buf_svg.getvalue(),
                    file_name=f"{pA.replace(' ','_')}_vs_{pB.replace(' ','_')}_radar_SB.svg",
                    mime="image/svg+xml")
+
 
 
 
