@@ -254,7 +254,7 @@ def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB,
     fig.text(0.88, 0.935, subB,   color=COL_B, fontsize=SUB_FS,      ha="right")
 
     if show_avg and AVG_r is not None:
-        fig.text(0.1, 0.2, "— Average / 50th Percentile", color="#6B7280", fontsize=8, ha="center")
+        fig.text(0.2, 0.1, "— Average / 50th Percentile | Stats per 90", color="#6B7280", fontsize=6, ha="center")
 
     return fig
 
