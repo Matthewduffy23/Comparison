@@ -1,4 +1,4 @@
-# app.py — SB-style radar (grey annulus bands • solid fills • no spokes • subtle tick labels)
+# app.py — SB-style radar (grey annulus bands • solid fills • no spokes • subtle tick labels • PERCENTILES 0–100)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -19,9 +19,10 @@ FILL_B = (29/255, 78/255, 216/255, 0.60)
 PAGE_BG   = "#FFFFFF"
 AX_BG     = "#FFFFFF"
 
-GRID_BAND_A = "#E5E7EB"    # gray-100
-GRID_BAND_B = "#FFFFFF"    # cool gray
-RING_COLOR  = "#D1D5DB"    # gray-300
+# Bands + ring outlines (you can flip A/B if you prefer the other way round)
+GRID_BAND_A = "#E5E7EB"    # light gray
+GRID_BAND_B = "#FFFFFF"    # white
+RING_COLOR  = "#D1D5DB"    # ring strokes
 RING_LW     = 1.0
 
 LABEL_COLOR = "#0F172A"
@@ -119,6 +120,7 @@ except IndexError:
     st.error("Selected player not found.")
     st.stop()
 
+# Pool limited to shared leagues + filters (same as before)
 union_leagues = {rowA["League"], rowB["League"]}
 pool = df[
     (df["League"].isin(union_leagues)) &
@@ -132,6 +134,7 @@ if missing_m:
     st.error(f"Missing metric columns: {missing_m}")
     st.stop()
 
+# Numeric conversion + drop NaNs
 for m in metrics:
     pool[m] = pd.to_numeric(pool[m], errors="coerce")
 pool = pool.dropna(subset=metrics)
@@ -139,46 +142,37 @@ if pool.empty:
     st.warning("No players remain in pool after filters.")
     st.stop()
 
-def vals_for(name: str) -> np.ndarray:
-    sub = pool[pool["Player"] == name][metrics]
-    return sub.mean().values if not sub.empty else np.full(len(metrics), np.nan)
-
-A_val = vals_for(pA)
-B_val = vals_for(pB)
-
-axis_min = pool[metrics].min().values
-axis_max = pool[metrics].max().values
-pad = (axis_max - axis_min) * 0.07
-axis_min = axis_min - pad
-axis_max = axis_max + pad
-
-def normalize(vals, mn, mx):
-    rng = (mx - mn)
-    rng[rng == 0] = 1.0
-    return np.clip((vals - mn)/rng, 0, 1)
-
-A_r = normalize(A_val, axis_min, axis_max) * 100
-B_r = normalize(B_val, axis_min, axis_max) * 100
-
-AVG_val = pool[metrics].mean().values
-AVG_r   = normalize(AVG_val, axis_min, axis_max) * 100
-
 labels = [clean_label(m) for m in metrics]
 
+# ---- Percentile scaling (0–100) ----
+# Rank each metric column within the *current pool* to get percentiles.
+# pct=True returns 0..1; multiply by 100 for 0..100.
+pool_pct = pool[metrics].rank(pct=True) * 100.0
+
+def pct_for(player: str) -> np.ndarray:
+    sub_idx = pool[pool["Player"] == player].index
+    if len(sub_idx) == 0:
+        return np.full(len(metrics), np.nan)
+    # If the player has multiple rows, take the mean of their percentile rows
+    return pool_pct.loc[sub_idx, :].mean(axis=0).values
+
+A_r = pct_for(pA)
+B_r = pct_for(pB)
+
+# Pool "average" as the 50th percentile line
+AVG_r = np.full(len(metrics), 50.0)
+
+# Sort axes by gap if requested (uses percentile gap)
 if sort_by_gap:
     order = np.argsort(-np.abs(A_r - B_r))
-    labels  = [labels[i] for i in order]
-    A_r     = A_r[order]
-    B_r     = B_r[order]
-    A_val   = A_val[order]
-    B_val   = B_val[order]
-    AVG_r   = AVG_r[order]
-    AVG_val = AVG_val[order]
-    axis_min = axis_min[order]; axis_max = axis_max[order]
+    labels = [labels[i] for i in order]
+    A_r    = A_r[order]
+    B_r    = B_r[order]
+    AVG_r  = AVG_r[order]  # still 50s, but keep shape consistent
 
-# radii & (hidden) tick values; we’ll render tiny labels instead
+# Radii for 10 rings and tick labels now in percentiles
 ring_radii = np.linspace(INNER_HOLE, 100, NUM_RINGS)
-axis_ticks = [np.linspace(axis_min[i], axis_max[i], NUM_RINGS) for i in range(len(labels))]
+axis_ticks = [np.linspace(0, 100, NUM_RINGS) for _ in range(len(labels))]
 
 # -------------- Radar drawer --------------
 def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB,
@@ -218,8 +212,8 @@ def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB,
     for r in ring_radii:
         ax.plot(ring_t, np.full_like(ring_t, r), color=RING_COLOR, lw=RING_LW, zorder=0.9)
 
-    # Tiny, light numeric labels from the 3rd ring outward
-    start_idx = 2  # 0-based; show at rings 2..9 => 3rd ring onwards
+    # Tiny, light numeric labels from the 3rd ring outward (percentiles)
+    start_idx = 2  # 0-based; show from 3rd ring outwards
     for i, ang in enumerate(theta):
         vals = ticks[i][start_idx:]
         for rr, v in zip(ring_radii[start_idx:], vals):
@@ -230,7 +224,7 @@ def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB,
     ax.add_artist(Circle((0,0), radius=INNER_HOLE-0.6, transform=ax.transData._b,
                          color=PAGE_BG, zorder=1.2, ec="none"))
 
-    # Optional pool average (thin line)
+    # Optional pool average (50th pct) as thin line
     if show_avg and AVG_r is not None:
         Avg = np.concatenate([AVG_r, AVG_r[:1]])
         ax.plot(theta_closed, Avg, lw=1.5, color="#94A3B8", ls="--", alpha=0.9, zorder=2.2)
@@ -251,7 +245,7 @@ def draw_radar(labels, A_r, B_r, ticks, headerA, subA, headerB, subB,
     fig.text(0.88, 0.935, subB,   color=COL_B, fontsize=SUB_FS,      ha="right")
 
     if show_avg and AVG_r is not None:
-        fig.text(0.5, 0.09, "— Pool average", color="#6B7280", fontsize=10, ha="center")
+        fig.text(0.5, 0.09, "— Pool average (50th percentile)", color="#6B7280", fontsize=10, ha="center")
 
     return fig
 
@@ -276,4 +270,6 @@ fig.savefig(buf_svg, format="svg", bbox_inches="tight")
 st.download_button("⬇️ Download SVG", data=buf_svg.getvalue(),
                    file_name=f"{pA.replace(' ','_')}_vs_{pB.replace(' ','_')}_radar_SB.svg",
                    mime="image/svg+xml")
+
+
 
