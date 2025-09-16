@@ -19,8 +19,8 @@ FILL_B = (29/255, 78/255, 216/255, 0.60)
 PAGE_BG   = "#FFFFFF"
 AX_BG     = "#FFFFFF"
 
-GRID_BAND_A = "#FFFFFF"    # gray-100
-GRID_BAND_B = "#DEE3EA"    # cool gray
+GRID_BAND_A = "#E5E7EB"    # gray-100
+GRID_BAND_B = "#FFFFFF"    # cool gray
 RING_COLOR  = "#D1D5DB"    # gray-300
 RING_LW     = 1.0
 
